@@ -521,6 +521,14 @@ float kdVcirc(KD kd, SMX smx, GRPNODE *grp)
     return(vm);
 }
     
+float rhoEnclosed(float mass, float r2)
+{
+    float r3;
+    r3 = r2*sqrt(r2);
+    return mass / (1.33333333*M_PI*r3);  /* (1.333333=4/3) */
+}
+
+    
 
 float kdRvir(KD kd, SMX smx, float fRhoVir, GRPNODE *grp)
 {
@@ -530,10 +538,11 @@ float kdRvir(KD kd, SMX smx, float fRhoVir, GRPNODE *grp)
     /*
      *  Beginning at 1.2 Rgtp, gather all particles and sort them in order
      *  of ascending radius.  Find the rho enclosed by kd->nMembers particles,
-     *  then incrementally add additional particles until rho crosses fRhoVir.
-     *  If rho does not cross fRhoVir by 1.2 Rgtp, increase radius by 20% and
-     *  redo BallSearch.  During these additional iterations, start addiing particles
-     *  at the last tested radius.
+     *  then incrementally add additional particles until rho is less than
+     *  fRhoVir for two consecutive particles.  If this condition is not met
+     *  by 1.2 Rgtp, increase radius by 20% and redo BallSearch.
+     *  During these additional iterations, start with the accumulations from
+     *  the particles at the last tested radius (oohhh...aaahhhh....efficiency!).
      *  The virial radius is defined as the radius at which the mass enclosed
      *  has density fRhoVir.
      *  Errors are returned if nParticles within 1.2 Rgtp is less than nMembers,
@@ -563,22 +572,27 @@ float kdRvir(KD kd, SMX smx, float fRhoVir, GRPNODE *grp)
 	    for(j=0;j<kd->nMembers;++j) {
 		mass += smx->nnList[j].pInit->fMass;
 	    }
-	    r3 = smx->nnList[j-1].fDist2*sqrt(smx->nnList[j-1].fDist2);
-	    rho = mass / ((4./3.)*M_PI*r3);
+	    /*r3 = smx->nnList[j-1].fDist2*sqrt(smx->nnList[j-1].fDist2);
+	      rho = mass / ((4./3.)*M_PI*r3); */
 	    /* fprintf(stderr,"\n%d: %g  %g\n,",j-1,r3,rho); */
-	    if (rho < fRhoVir) {                /* Declare failure if already below density */
+            /* Declare failure if already below density for this particle *and* the next one */
+	    if (rhoEnclosed(mass,smx->nnList[j-1].fDist2) < fRhoVir &&
+		rhoEnclosed(mass+smx->nnList[j].pInit->fMass,smx->nnList[j].fDist2) < fRhoVir ) {
 		grp->fRvir=-2.0;
 		grp->fMvir=-2.0;
 		return(-2.0);   
 	    }
 	    jlast=j;
 	}
-	for(j=jlast;j<nParticles;j++) {
+	for(j=jlast;j<nParticles-1;j++) {
 	    mass += smx->nnList[j].pInit->fMass;
-	    r = sqrt(smx->nnList[j].fDist2);
+	    /*r = sqrt(smx->nnList[j].fDist2);
 	    r3 = r*smx->nnList[j].fDist2;
-	    rho = mass / ((4./3.)*M_PI*r3);
-	    if(rho < fRhoVir) {
+	    rho = mass / ((4./3.)*M_PI*r3);*/
+	    /* Again, virial radius criterion is that density for this and next
+	     * Next particle is below fRhoVir */
+	    if(rhoEnclosed(mass,smx->nnList[j].fDist2) < fRhoVir &&
+	       rhoEnclosed(mass+smx->nnList[j+1].pInit->fMass,smx->nnList[j+1].fDist2) < fRhoVir) {
 		mass -= smx->nnList[j].pInit->fMass;  /* now "mass" is mass *within* Rvir */
 		r3=mass / ((4./3.)*M_PI*fRhoVir); /* Now we know Mvir and RhoVir -> find Rvir  */
 		r=pow(r3,0.3333333333);

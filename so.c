@@ -61,7 +61,7 @@ void usage(void)
     fprintf(stderr,"       in a separate file <outfilebase>.sodark / .sogas / .sostar\n");
     fprintf(stderr,"   -all: same as '-dark -gas -star'.\n");
     fprintf(stderr,"   -mark: Outputs radial profile of marked particles given in <markfile> to\n");
-    fprintf(stderr,"       to a separate file <outfilebase>.somark\n.");
+    fprintf(stderr,"       to a separate file <outfilebase>.somark.\n");
     fprintf(stderr,"   -std: Read and write standard TIPSY binaries.\n");
     fprintf(stderr,"   -rho: By default, <fThreshold> is calculated automatically from cosmological\n");
     fprintf(stderr,"       parameters to be the virial density, but may be overridden using the\n");
@@ -105,7 +105,7 @@ int main(int argc,char **argv)
 	time_t timeRun;
 	FILE *fpOutFile;
 
-	fprintf(stderr,"SO v1.1: Jeff Gardner, Jan 2000\n");
+	fprintf(stderr,"SO Release 1.3: Jeff Gardner, Jan 2000\n");
 	strcpy(achDefOutBase,"so");
 	/*
 	 ** Bucket size set to 16, user cannot affect this!
