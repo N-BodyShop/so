@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <malloc.h>
 #include <math.h>
-#include <sys/time.h>
 #include <sys/resource.h>
 #include <rpc/types.h>
 #include <rpc/xdr.h>
@@ -43,7 +42,7 @@ void kdTime(KD kd,int *puSecond,int *puMicro)
 
 
 int kdInit(KD *pkd,int nBucket,float *fPeriod,float *fCenter,int bOutDiag,
-	   int nMembers, int bPeriodic)
+	   int nMembers, int bPeriodic, int bDark, int bGas, int bStar, int bMark)
 {
 	KD kd;
 	int j;
@@ -83,6 +82,11 @@ int kdInit(KD *pkd,int nBucket,float *fPeriod,float *fCenter,int bOutDiag,
 	kd->nGrps = 0;
 	*pkd = kd;
 	kd->bPeriodic = bPeriodic;
+        kd->bDark = bDark;
+        kd->bGas = bGas;
+        kd->bStar = bStar;
+        kd->bMark = bMark;
+	kd->bMarkList = NULL;
 	return(1);
 	}
 
@@ -115,6 +119,33 @@ int kdParticleType(KD kd,int iOrder)
 	}
 
 
+int kdReadMark(KD kd, char *achMarkFile)
+{
+    int i,j,k,nmark;
+    FILE *in;
+
+    in = fopen(achMarkFile,"r");
+    assert(in != NULL);
+
+    assert(kd->bMarkList == NULL);
+    kd->bMarkList = (char *) malloc(kd->nParticles*sizeof(char));
+    assert(kd->bMarkList != NULL);
+    for(i=0;i<kd->nParticles;++i)
+	kd->bMarkList[i]=0;
+
+    fscanf(in,"%d %d %d",&i,&j,&k);  /* header */
+    nmark=0;
+    while(fscanf(in,"%d",&i) != EOF) {
+	--i;  /* Mark file indexing begins at 1 */
+	assert(i < kd->nParticles);
+	kd->bMarkList[i]=1;
+	++nmark;
+    }
+    
+    fclose(in);
+    return(nmark);
+}
+    
 
 int kdReadGTPList(KD kd, char *achGTPFile, char *achListFile,
 		     float fMinMass, int bStandard)
@@ -339,6 +370,67 @@ int CmpList(const void *p1,const void *p2)
     return(0);
 }
 
+void addProfileMass(GRPNODE *grp, int i, float mass, int ptype)
+{
+	/* Now we have all masses */
+	switch (ptype) {
+	case (DARK):
+	    grp->fDark[i]=mass;
+	    break;
+	case (GAS):
+	    grp->fGas[i]=mass;
+	    break;
+	case (STAR):
+	    grp->fStar[i]=mass;
+	    break;
+	case (MARK):
+	    grp->fMark[i]=mass;
+	    break;
+	    assert(0);
+	}
+}
+
+
+void kdMassProfile(KD kd, SMX smx, GRPNODE *grp, float rvir, int nParticles, int ptype)
+{
+    int i,j;
+    float f,fmin,r,r2,mass;
+
+    fmin=2.0/NVCIRC;  /* NVCIRC is number if Vcirc bins...this sets increments */
+    j=0;
+    mass=0.0;
+    for(f=fmin,i=0;i<NVCIRC-1;++i,f+=fmin) {  /* f is fraction of Rvir */
+	r=f*rvir;
+	r2=r*r;
+    	while(smx->nnList[j].fDist2 < r2 && j < nParticles) {
+	    if (ptype == MARK) {
+		if (kd->bMarkList[smx->nnList[j].pInit->iOrder])
+		    mass += smx->nnList[j].pInit->fMass;
+	    } else {
+		if(kdParticleType(kd,smx->nnList[j].pInit->iOrder) == ptype)
+		    mass += smx->nnList[j].pInit->fMass;
+	    }
+	    ++j;
+	}
+	
+	addProfileMass(grp,i,mass,ptype);
+    }
+
+    /* For the last bin, just add up the remaining particles */
+    while(j<nParticles) {
+	if (ptype == MARK) {
+	    if (kd->bMarkList[smx->nnList[j].pInit->iOrder])
+		mass += smx->nnList[j].pInit->fMass;
+	} else {
+	    if(kdParticleType(kd,smx->nnList[j].pInit->iOrder) == ptype)
+		mass += smx->nnList[j].pInit->fMass;
+	}
+	++j;
+    }
+    addProfileMass(grp,NVCIRC-1,mass,ptype);
+
+}
+
 float kdVcirc(KD kd, SMX smx, GRPNODE *grp)
 {
     int i,j,jlast,nParticles;
@@ -361,14 +453,13 @@ float kdVcirc(KD kd, SMX smx, GRPNODE *grp)
     for(f=fmin,i=0;i<NVCIRC-1;++i,f+=fmin) {  /* f is fraction of Rvir */
 	r=f*rvir;
 	r2=r*r;
-	while(smx->nnList[j].fDist2 < r2) {
+	while(smx->nnList[j].fDist2 < r2 && j < nParticles) {
 	    mass += smx->nnList[j].pInit->fMass;
 	    ++j;
 	}
 	/* Now we have mass enclosed */
 	grp->fVcirc[i]=sqrt(kd->G * mass / r);
     }
-    assert(j<nParticles);
     /* For the last bin, just add up the remaining particles */
     while(j<nParticles) {
 	mass += smx->nnList[j].pInit->fMass;
@@ -413,10 +504,23 @@ float kdVcirc(KD kd, SMX smx, GRPNODE *grp)
     grp->fRmax = rm;
     grp->fVmax = vm;
 
+    /*
+     * Find radial profiles of other things specified by user
+     */
+
+    if (kd->bDark)
+	kdMassProfile(kd,smx,grp,rvir,nParticles,DARK);
+    if (kd->bGas)
+	kdMassProfile(kd,smx,grp,rvir,nParticles,GAS);
+    if (kd->bStar)
+	kdMassProfile(kd,smx,grp,rvir,nParticles,STAR);
+    if (kd->bMark)
+	kdMassProfile(kd,smx,grp,rvir,nParticles,MARK);
+
+
     return(vm);
 }
     
-
 
 float kdRvir(KD kd, SMX smx, float fRhoVir, GRPNODE *grp)
 {
@@ -517,7 +621,76 @@ void kdSO(KD kd, float rhovir, int nSmooth)
 
 #define GRAV       6.6726e-8   /* G in cgs */
 
-void kdWriteOut(KD kd)
+void kdWriteProfile(KD kd, char *achOutFileBase,time_t timeRun, FILE *fpOutFile, int ptype)
+{
+    int i,j;
+    float massunit;
+    char pstring[5],longword[128];
+    GRPNODE *gg;
+    FILE *outfile;
+
+    switch (ptype) {
+    case (DARK):
+	assert(kd->bDark);
+	sprintf(longword,"%s.sodark",achOutFileBase);
+	strcpy(pstring,"dark");
+	break;
+    case (GAS):
+	assert(kd->bGas);
+	sprintf(longword,"%s.sogas",achOutFileBase);
+	strcpy(pstring,"gas");
+	break;
+    case (STAR):
+	assert(kd->bStar);
+	sprintf(longword,"%s.sostar",achOutFileBase);
+	strcpy(pstring,"star");
+	break;
+    case (MARK):
+	assert(kd->bMark);
+	sprintf(longword,"%s.somark",achOutFileBase);
+	strcpy(pstring,"marked");
+	break;
+	assert(0);
+    }
+	
+    outfile = fopen(longword,"w");
+    assert(outfile != NULL);
+    fprintf(fpOutFile,"# Radial mass profile for %s particles written to %s\n",pstring,longword);
+
+    if (kd->fMassUnit < 0.0) {  /* If units not set, do not convert */
+	massunit = 1.0;
+    } else {
+	massunit = kd-> fMassUnit;
+    }
+
+    fprintf(outfile,"# Radial mass profile for %s particles\n",pstring);
+    fprintf(outfile,"# Run on %s",ctime(&timeRun));
+    fprintf(outfile,"# grp# Mass(R = %4.2f ... 2 Rvir)\n",2.0/NVCIRC);
+    for(gg=kd->grps,i=0;i<kd->nGrps;i++,gg++) {
+	fprintf(outfile,"%d ",gg->index);
+	for(j=0;j<NVCIRC;++j) {
+	    switch (ptype) {
+	    case (DARK):
+		fprintf(outfile,"%g ",gg->fDark[j]*massunit);
+		break;
+	    case (GAS):
+		fprintf(outfile,"%g ",gg->fGas[j]*massunit);
+		break;
+	    case (STAR):
+		fprintf(outfile,"%g ",gg->fStar[j]*massunit);
+		break;
+	    case (MARK):
+		fprintf(outfile,"%g ",gg->fMark[j]*massunit);
+		break;
+		assert(0);
+	    }
+	}
+	fprintf(outfile,"\n");
+    }
+    fclose(outfile);
+}
+
+void kdWriteOut(KD kd, FILE *fpOutFile)
 {
     int i,j;
     float kmsecunit,massunit,kpcunit;
@@ -540,20 +713,20 @@ void kdWriteOut(KD kd)
 	massunit = kd-> fMassUnit;
     }
 
-    printf("# grp# Mvir Rvir R(0.25Mvir) R(0.5Mvir)  R(Vc_max)  Vc_max  Vc(R = %4.2f ... 2 Rvir)\n",
+    fprintf(fpOutFile,"#\n# grp# Mvir Rvir R(0.25Mvir) R(0.5Mvir)  R(Vc_max)  Vc_max  Vc(R = %4.2f ... 2 Rvir)\n",
 	   2.0/NVCIRC);
     for (i=0,gg=kd->grps;i<kd->nGrps;++i,++gg) {
 	if (gg->fMvir < 0.0) {  /* Error condition */
-	    printf("%i %g %g ",gg->index,gg->fMvir,gg->fRvir);
+	    fprintf(fpOutFile,"%i %g %g ",gg->index,gg->fMvir,gg->fRvir);
 	} else {
-	    printf("%i %g %g ",gg->index,gg->fMvir*massunit,gg->fRvir*kpcunit);
+	    fprintf(fpOutFile,"%i %g %g ",gg->index,gg->fMvir*massunit,gg->fRvir*kpcunit);
 	}
-	printf("%g %g %g %g ",gg->fRmass[0]*kpcunit,gg->fRmass[1]*kpcunit,gg->fRmax*kpcunit,
+	fprintf(fpOutFile,"%g %g %g %g ",gg->fRmass[0]*kpcunit,gg->fRmass[1]*kpcunit,gg->fRmax*kpcunit,
 	       gg->fVmax*kmsecunit);
 	for(j=0;j<NVCIRC;++j) {
-	    printf("%g ",gg->fVcirc[j]*kmsecunit);
+	    fprintf(fpOutFile,"%g ",gg->fVcirc[j]*kmsecunit);
 	}
-	printf("\n");
+	fprintf(fpOutFile,"\n");
     }
 }
 

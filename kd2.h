@@ -2,6 +2,7 @@
 #define KD_HINCLUDED
 
 #include "cosmo.h"
+#include <sys/time.h>
 
 /* Number of Vcirc bins */
 #define NVCIRC 8
@@ -20,8 +21,9 @@
 	}
 
 #define DARK	1
-#define GAS		2
+#define GAS	2
 #define STAR	4
+#define MARK    8
 
 /*
  ** Softening types!
@@ -81,6 +83,10 @@ typedef struct grpNode {
     float fRmass[2];  /* quarter and half mass radii */
     float fRmax;
     float fVmax;
+    float fDark[NVCIRC];
+    float fGas[NVCIRC];
+    float fStar[NVCIRC];
+    float fMark[NVCIRC];
 } GRPNODE;
 
 typedef struct kdContext {
@@ -116,7 +122,12 @@ typedef struct kdContext {
 	int bOutDiag;
         GRPNODE *grps;
         int nGrps;
-        int nMembers;
+        int nMembers;        
+        int bDark;
+        int bGas;
+        int bStar;
+        int bMark;
+        char *bMarkList;
 	} * KD;
 
 
@@ -225,13 +236,15 @@ typedef struct kdContext {
 
 
 void kdTime(KD,int *,int *);
-int kdInit(KD *,int,float *,float *,int,int,int);
+int kdInit(KD *,int,float *,float *,int,int,int,int,int,int,int);
 void kdSetUniverse(KD,float,float,float,float,float,float,float);
 int kdParticleType(KD,int);
+int kdReadMark(KD, char *);
 int kdReadGTPList(KD, char *, char *, float, int);
 int kdReadTipsy(KD,FILE *,int);
 void kdSO(KD, float, int);
-void kdWriteOut(KD);
+void kdWriteProfile(KD, char *, time_t, FILE *, int);
+void kdWriteOut(KD, FILE *);
 int kdBuildTree(KD);
 void kdFinish(KD);
 
