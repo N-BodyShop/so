@@ -274,9 +274,9 @@ int kdReadStat(KD kd, char *achStatFile)
 	}
 	fscanf(fp,"%f %f %f",&r[0],&r[1],&r[2]);
 	if (grpnum == kd->grps[k].index) {   /* Replace center */
-	    fprintf(stderr,"Replaced grp %d pos: %g %g %g  to  pos: %g %g %g\n",
+	    /*fprintf(stderr,"Replaced grp %d pos: %g %g %g  to  pos: %g %g %g\n",
 		    kd->grps[k].index,kd->grps[k].pos[0],kd->grps[k].pos[1],
-		    kd->grps[k].pos[2],r[0],r[1],r[2]);
+		    kd->grps[k].pos[2],r[0],r[1],r[2]);/*
 	    for (j=0;j<3;++j) {
 		kd->grps[k].pos[j] = r[j];
 	    }
@@ -600,16 +600,16 @@ float kdRvir(KD kd, SMX smx, float fRhoVir, GRPNODE *grp)
 	for (k=0;k<3;k++) ballCtr[k] = smx->nnList[0].pInit->r[k];
 	for (i=1;i<nParticles;++i) {
 	    if (smx->nnList[i].pInit->fPhi < minPot) {
-		if (grp->index==220) {
+		/*if (grp->index==220) {
 		    fprintf(stderr,"minPot0: %g  minPot1: %g  pos: %g %g %g\n",minPot,
 			    smx->nnList[i].pInit->fPhi,smx->nnList[i].pInit->r[0],
 			    smx->nnList[i].pInit->r[1],smx->nnList[i].pInit->r[2]);
 		    minPot = smx->nnList[i].pInit->fPhi;
-		}
+		    }*/
 		for (k=0;k<3;k++) ballCtr[k] = smx->nnList[i].pInit->r[k];
 	    }		    
 	}
-	fprintf(stderr,"%d: %g %g %g\n",grp->index,ballCtr[0],ballCtr[1],ballCtr[2]);
+	/*fprintf(stderr,"%d: %g %g %g\n",grp->index,ballCtr[0],ballCtr[1],ballCtr[2]);*/
     }
     
 
