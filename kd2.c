@@ -10,6 +10,8 @@
 #include "smooth2.h"
 #include "tipsydefs.h"
 
+#define max(A,B) ((A) > (B) ? (A) : (B))
+#define min(A,B) ((A) < (B) ? (A) : (B))
 
 int xdrHeader(XDR *pxdrs,struct dump *ph)
 {
@@ -42,7 +44,8 @@ void kdTime(KD kd,int *puSecond,int *puMicro)
 
 
 int kdInit(KD *pkd,int nBucket,float *fPeriod,float *fCenter,int bOutDiag,
-	   int nMembers, int bPeriodic, int bDark, int bGas, int bStar, int bMark)
+	   int nMembers, int bPeriodic, int bDark, int bGas, int bStar,
+	   int bMark, int bPot)
 {
 	KD kd;
 	int j;
@@ -72,7 +75,7 @@ int kdInit(KD *pkd,int nBucket,float *fPeriod,float *fCenter,int bOutDiag,
 	kd->nInitActive = 0;
 	kd->pMove = NULL;
 	kd->pInit = NULL;
-	kd->pGroup = NULL;
+	/*	kd->pGroup = NULL; */
 	kd->kdNodes = NULL;
 	kd->piGroup = NULL;
 	kd->nGroup = 0;
@@ -87,6 +90,7 @@ int kdInit(KD *pkd,int nBucket,float *fPeriod,float *fCenter,int bOutDiag,
         kd->bStar = bStar;
         kd->bMark = bMark;
 	kd->bMarkList = NULL;
+	kd->bPot = bPot;
 	return(1);
 	}
 
@@ -248,10 +252,40 @@ int kdReadGTPList(KD kd, char *achGTPFile, char *achListFile,
 	    assert(k<=h.nstar);
 	}    
 	kd->nGrps = k;
+	kd->nInGTP = h.nstar;
 	free(GTP_particles);
 	return(k);
 }	
 
+
+int kdReadStat(KD kd, char *achStatFile)
+{
+    int i,j,k,itemp,grpnum;
+    float ftemp, r[3];
+    FILE *fp;
+
+    assert(achStatFile != NULL);
+    fp = fopen(achStatFile,"r");
+    assert(fp != NULL);
+    k=0;
+    while(fscanf(fp,"%d %d",&grpnum,&itemp) != EOF) {
+	for (i=0;i<16;++i) {
+	    fscanf(fp,"%f",&ftemp);
+	}
+	fscanf(fp,"%f %f %f",&r[0],&r[1],&r[2]);
+	if (grpnum == kd->grps[k].index) {   /* Replace center */
+	    fprintf(stderr,"Replaced grp %d pos: %g %g %g  to  pos: %g %g %g\n",
+		    kd->grps[k].index,kd->grps[k].pos[0],kd->grps[k].pos[1],
+		    kd->grps[k].pos[2],r[0],r[1],r[2]);
+	    for (j=0;j<3;++j) {
+		kd->grps[k].pos[j] = r[j];
+	    }
+	    ++k;
+	}
+    }
+    fclose(fp);
+    return(k);
+}
 
 
 int kdReadTipsy(KD kd,FILE *fp, int bStandard)
@@ -298,6 +332,7 @@ int kdReadTipsy(KD kd,FILE *fp, int bStandard)
 	 */
 	for (i=0;i<kd->nParticles;++i) {
 		p[i].iOrder = i;
+		p[i].iGrp = 0;
 		p[i].fDensity = 0.0;
 		switch (kdParticleType(kd,i)) {
 		case (GAS):
@@ -309,7 +344,7 @@ int kdReadTipsy(KD kd,FILE *fp, int bStandard)
 			    fread(&gp,sizeof(struct gas_particle),1,fp);
 			    }
 			p[i].fMass = gp.mass;
-			p[i].fSoft = gp.hsmooth;
+			p[i].fPhi = gp.phi;
 			p[i].fTemp = gp.temp;
 			for (j=0;j<3;++j) {
 				p[i].r[j] = gp.pos[j];
@@ -325,7 +360,7 @@ int kdReadTipsy(KD kd,FILE *fp, int bStandard)
 			    fread(&dp,sizeof(struct dark_particle),1,fp);
 			    }
 			p[i].fMass = dp.mass;
-			p[i].fSoft = dp.eps;
+			p[i].fPhi = dp.phi;
 			p[i].fTemp = 0.0;
 			for (j=0;j<3;++j) {
 				p[i].r[j] = dp.pos[j];
@@ -341,7 +376,7 @@ int kdReadTipsy(KD kd,FILE *fp, int bStandard)
 			    fread(&sp,sizeof(struct star_particle),1,fp);
 			    }
 			p[i].fMass = sp.mass;
-			p[i].fSoft = sp.eps;
+			p[i].fPhi = sp.phi;
 			p[i].fTemp = 0.0;
 			for (j=0;j<3;++j) {
 				p[i].r[j] = sp.pos[j];
@@ -532,8 +567,8 @@ float rhoEnclosed(float mass, float r2)
 
 float kdRvir(KD kd, SMX smx, float fRhoVir, GRPNODE *grp)
 {
-    int i,j,jlast,nParticles;
-    float mass,fBall,fBall2,r,r3,rho;
+    int i,j,k,l,jlast,nParticles;
+    float mass,fBall,fBall2,r,r3,rho,minPot,ballCtr[3];
     
     /*
      *  Beginning at 1.2 Rgtp, gather all particles and sort them in order
@@ -552,23 +587,53 @@ float kdRvir(KD kd, SMX smx, float fRhoVir, GRPNODE *grp)
     jlast=0;
     mass = 0.0;
     fBall = grp->fRgtp;                  /* Start at 1.2 Rvir */
+    for (k=0;k<3;++k) ballCtr[k] = grp->pos[k];  /* Always do first search on GRP center */
     /*fprintf(stderr,"In kdRvir: index: %d  fRgtp: %g  pos: %g %g %g\n",grp->index,
       grp->fRgtp,grp->pos[0],grp->pos[1],grp->pos[2]);*/
+
+    /* Find most bound particle if applicable */
+    if (kd->bPot) {              
+	fBall2 = fBall*fBall;
+	nParticles = smBallGather(smx,fBall2,ballCtr);
+	/*fprintf(stderr,"Old center: %g %g %g\n",ballCtr[0],ballCtr[1],ballCtr[2]);*/
+	minPot = smx->nnList[0].pInit->fPhi;
+	for (k=0;k<3;k++) ballCtr[k] = smx->nnList[0].pInit->r[k];
+	for (i=1;i<nParticles;++i) {
+	    if (smx->nnList[i].pInit->fPhi < minPot) {
+		if (grp->index==220) {
+		    fprintf(stderr,"minPot0: %g  minPot1: %g  pos: %g %g %g\n",minPot,
+			    smx->nnList[i].pInit->fPhi,smx->nnList[i].pInit->r[0],
+			    smx->nnList[i].pInit->r[1],smx->nnList[i].pInit->r[2]);
+		    minPot = smx->nnList[i].pInit->fPhi;
+		}
+		for (k=0;k<3;k++) ballCtr[k] = smx->nnList[i].pInit->r[k];
+	    }		    
+	}
+	fprintf(stderr,"%d: %g %g %g\n",grp->index,ballCtr[0],ballCtr[1],ballCtr[2]);
+    }
+    
+
     while(fBall < (3.0 * grp->fRgtp)) {  /* Declare defeat by 3 Rgtp */
 	fBall *= 1.2;                           /* Increase by 20% each iteration */
 	fBall2 = fBall*fBall;
-	nParticles = smBallGather(smx,fBall2,grp->pos);
-	/*fprintf(stderr,"fBall: %g  fBall2: %g  nParticles: %d\n",fBall,fBall2,nParticles);*/
-	qsort(smx->nnList,nParticles,sizeof(NN),CmpList);
-	/*for (i=0;i<8;++i) {
-	    fprintf(stderr,"%g  ",smx->nnList[i-1].fDist2);
-	    }*/
-	if (!jlast) {                          /* First time through */
+	nParticles = smBallGather(smx,fBall2,ballCtr);
+	
+	if (!jlast) {                    /* First time through */
 	    if (nParticles < kd->nMembers) {   /* Declare failure if not enough particles */
 		grp->fRvir=-1.0;
 		grp->fMvir=-1.0;
 		return(-1.0);   
 	    }
+	}
+		
+	/* Sort according to distance from center */
+	/*fprintf(stderr,"fBall: %g  fBall2: %g  nParticles: %d\n",fBall,fBall2,nParticles);*/
+	qsort(smx->nnList,nParticles,sizeof(NN),CmpList);
+	/*for (i=0;i<8;++i) {
+	    fprintf(stderr,"%g  ",smx->nnList[i-1].fDist2);
+	    }*/
+
+	if (!jlast) {                          /* First time through */
 	    for(j=0;j<kd->nMembers;++j) {
 		mass += smx->nnList[j].pInit->fMass;
 	    }
@@ -598,6 +663,19 @@ float kdRvir(KD kd, SMX smx, float fRhoVir, GRPNODE *grp)
 		r=pow(r3,0.3333333333);
 		grp->fRvir=r;
 		grp->fMvir=mass;
+		/* Tag all particles that are within fRvir and find grp mean velocity */
+		for (k=0;k<j;++k) {
+		    smx->nnList[k].pInit->iGrp=grp->index;
+		    /*fprintf(stderr,"  iGrp1: %d   iOrder: %d  pos: %g %g %g\n",
+			    smx->nnList[k].pInit->iGrp,smx->nnList[k].pInit->iOrder,
+			    smx->nnList[k].pInit->r[0],smx->nnList[k].pInit->r[1],
+			    smx->nnList[k].pInit->r[2]);*/
+		    for (l=0;l<3;l++)
+			grp->vcm[l] += smx->nnList[k].pInit->fMass*smx->nnList[k].pInit->v[l];
+		}
+		for (l=0;l<3;l++)
+		    grp->vcm[l] /= mass;
+
 		return(r);
 	    }
 	}
@@ -926,7 +1004,7 @@ void kdFinish(KD kd)
 {
 	if (kd->pMove) free(kd->pMove);
 	if (kd->pInit) free(kd->pInit);
-	if (kd->pGroup) free(kd->pGroup);
+	/*	if (kd->pGroup) free(kd->pGroup); */
 	if (kd->kdNodes) free(kd->kdNodes);
 	if (kd->piGroup) free(kd->piGroup);
 	if (kd->grps) free(kd->grps);
@@ -934,13 +1012,109 @@ void kdFinish(KD kd)
 	}
 
 
+int CmpInit(const void *p1,const void *p2)
+{
+	PINIT *a = (PINIT *)p1;
+	PINIT *b = (PINIT *)p2;
+
+	return(a->iOrder - b->iOrder);
+	}
+
+void Order(KD kd)
+{
+    if (kd->pInit != NULL) {
+	qsort(kd->pInit,kd->nParticles,sizeof(PINIT),CmpInit);
+    }
+}
 
 
+void kdWriteArray(KD kd, char *achOutFileBase)
+{
+    FILE *fp;
+    int i,j;
+    char longword[128];
+    
+    /* Order particles */
+    Order(kd);
+    /* Open grp file */
+    sprintf(longword,"%s.sogrp",achOutFileBase);
+    fp = fopen(longword,"w");
+    assert(fp != NULL);
+    fprintf(fp,"%d\n",kd->nParticles);
+    for (i=0;i<kd->nParticles;++i) {
+	fprintf(fp,"%d\n",kd->pInit[i].iGrp);
+	/*if (kd->pInit[i].iGrp != 0)
+	    fprintf(stderr,"i: %d  iOrder: %d  iGrp: %d\n",i,kd->pInit[i].iOrder,
+	    kd->pInit[i].iGrp);*/
+    }
+    fclose(fp);
+}
 
 
+void kdWriteGTP(KD kd, char *achOutFileBase, int bStandard)
+{
+	FILE *fp;
+	int i,j;
+	char longword[128];
+	struct dump h;
+	struct star_particle sp;
+	GRPNODE *gg;
+	XDR xdrs;
 
+	/*
+	 ** Now output the GTP file.
+	 */
 
-
-
-
+	sprintf(longword,"%s.sogtp",achOutFileBase);
+	fp = fopen(longword,"wb");
+	assert(fp != NULL);
+	h.nbodies = kd->nInGTP;
+	h.nstar = kd->nInGTP;
+	h.ndark = 0;
+	h.nsph = 0;
+	h.ndim = 3;
+	h.time = kd->fTime;
+	if (bStandard) {
+	    assert(sizeof(Real)==sizeof(float)); /* Otherwise, this XDR stuff
+						    ain't gonna work */
+	    xdrstdio_create(&xdrs, fp, XDR_ENCODE);
+	    xdrHeader(&xdrs,&h);
+	}
+	else {
+	    fwrite(&h,sizeof(struct dump),1,fp);
+	}
+	for (i=0,gg=kd->grps;i<kd->nInGTP;++i) {
+	    if (gg->index == i+1) {
+		sp.mass = max(gg->fMvir,0.0);  /* Set mass to zero for errorcode groups */
+		for (j=0;j<3;++j) {
+			sp.pos[j] = gg->pos[j];
+			sp.vel[j] = gg->vcm[j];
+			}
+		sp.eps = gg->fRvir;  /* Preserve errorcodes from eps field */
+		sp.metals = 0.0;
+		sp.tform = (float)gg->index;
+		sp.phi = 0.0;
+		++gg;
+	    } else {
+		sp.mass = 0.0;
+		for (j=0;j<3;++j) {
+			sp.pos[j] = 0.0;
+			sp.vel[j] = 0.0;
+			}
+		sp.eps = 0.0;
+		sp.metals = 0.0;
+		sp.tform = (float)(i+1);
+		sp.phi = 0.0;
+	    }		
+	    if (bStandard) {
+		xdr_vector(&xdrs, (char *) &sp, 11,
+			   sizeof(Real), (xdrproc_t) xdr_float);
+	    }
+	    else {
+		fwrite(&sp,sizeof(struct star_particle),1,fp);
+	    }
+	}
+	if (bStandard) xdr_destroy(&xdrs);
+	fclose(fp);
+}
 

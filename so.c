@@ -44,12 +44,14 @@ void usage(void)
 {
     fprintf(stderr,"USAGE:\n");
     fprintf(stderr,"so -i <FOF .gtp file> [-o <outfilebase>] [([-dark] [-gas] [-star]) || [-all])]\n");
-    fprintf(stderr,"          [-mark <markfile>]  [-std] [-list <File containing group indexes>]\n");
-    fprintf(stderr,"          [-rho <fThreshold>] [-M <fMinGTPMass>] [-m <mMinSOMembers>]\n");
-    fprintf(stderr,"          [-O <fOmega0>]  [-L]  [-z <fRedshift>]\n");
-    fprintf(stderr,"          [-p <xyzPeriod>]  [-c <xyzCenter>]\n");
-    fprintf(stderr,"          [-cx <xCenter>]  [-cy <yCenter>]  [-cz <zCenter>]\n");
-    fprintf(stderr,"          [-u <fMassUnit> <fMpcUnit>]\n\n");
+    fprintf(stderr,"      [-mark <markfile>]  [-std]  [-grp] [-gtp] \n");
+    fprintf(stderr,"      [-list <File containing group indexes>]\n");
+    fprintf(stderr,"      [-pot || -stat <SKID .stat file containing most-bound-particle positions>]\n");
+    fprintf(stderr,"      [-rho <fThreshold>] [-M <fMinGTPMass>] [-m <mMinSOMembers>]\n");
+    fprintf(stderr,"      [-O <fOmega0>]  [-L]  [-z <fRedshift>]\n");
+    fprintf(stderr,"      [-p <xyzPeriod>]  [-c <xyzCenter>]\n");
+    fprintf(stderr,"      [-cx <xCenter>]  [-cy <yCenter>]  [-cz <zCenter>]\n");
+    fprintf(stderr,"      [-u <fMassUnit> <fMpcUnit>]\n\n");
 
     fprintf(stderr,"  Finds smallest spherical radius R within which the density is less than\n");
     fprintf(stderr,"  the value <fThreshold> and calculates enclosed mass, half mass and quarter\n");
@@ -63,6 +65,19 @@ void usage(void)
     fprintf(stderr,"   -mark: Outputs radial profile of marked particles given in <markfile> to\n");
     fprintf(stderr,"       to a separate file <outfilebase>.somark.\n");
     fprintf(stderr,"   -std: Read and write standard TIPSY binaries.\n");
+    fprintf(stderr,"   -grp -gtp: Causes .sogrp and/or .sogtp file to be written.  The group\n");
+    fprintf(stderr,"       numbers given in these output files are the SAME as the group numbers\n");
+    fprintf(stderr,"       in the input .gtp file.  Groups in the .sogtp file that are not examined\n");
+    fprintf(stderr,"       at all will have 0 mass and 0 radius.  Groups for which SO tries and\n");
+    fprintf(stderr,"       fails to find radius R will have mass 0 and '-errorcode' radius.\n");
+    fprintf(stderr,"   -pot: Center on the most bound particle of the group.  Default is to center\n");
+    fprintf(stderr,"       on the group position as given in the input .gtp file.  In this case,\n");
+    fprintf(stderr,"       the most bound particle is the particle within the radius of the input\n");
+    fprintf(stderr,"       groups that has the smallest Phi field given in the TIPSY file.\n");
+    fprintf(stderr,"   -stat: Center on the most bound particle as reported by the SKID .stat file.\n");
+    fprintf(stderr,"       This method is preferable to to -pot as SKID constructs potentials from\n");
+    fprintf(stderr,"       only those particles in the group and is not subject to the global\n");
+    fprintf(stderr,"       potential field.  NOTE: this requires SKID revisions from 2/25/00.\n");
     fprintf(stderr,"   -rho: By default, <fThreshold> is calculated automatically from cosmological\n");
     fprintf(stderr,"       parameters to be the virial density, but may be overridden using the\n");
     fprintf(stderr,"       -rho option.\n");
@@ -70,10 +85,10 @@ void usage(void)
     fprintf(stderr,"   -p: THIS VERSION ASSUMES PERIODIC BOUNDRY CONDITIONS.  Default period = 1\n");
     fprintf(stderr,"   -z: <fRedshift> will be automatically calculated as 1/h.time-1 where h.time\n");
     fprintf(stderr,"       is read from the TIPSY particle file header.  -z will override this.\n");
-    fprintf(stderr,"   -M: <fMinGTPMass> specifies the minimum mass a group given in the .gtp file\n");
-    fprintf(stderr,"       must have in order to be considered.\n");
-    fprintf(stderr,"   -list: names an ASCII file which lists indexes of groups in the .gtp file\n");
-    fprintf(stderr,"       to be considered.  This may be used in conjunction with -M.\n");
+    fprintf(stderr,"   -M: <fMinGTPMass> specifies the minimum mass a group given in the input .gtp\n");
+    fprintf(stderr,"        file must have in order to be considered.\n");
+    fprintf(stderr,"   -list: names an ASCII file which lists indexes of groups in the input .gtp\n");
+    fprintf(stderr,"        file to be considered.  This may be used in conjunction with -M.\n");
     fprintf(stderr,"   -m: <fMinSOMembers> specifies the minimum number of particles a group must\n");
     fprintf(stderr,"       have for its parameters to be accurately calculated.\n");
     fprintf(stderr,"   -u: Output is in system units unless simulation units are specified with -u\n");
@@ -95,17 +110,17 @@ int main(int argc,char **argv)
 
 	int i,j;
 	int bThreshold, bStandard, bLambda, bPeriodic, bRedshift;
-	int bDark, bGas, bStar, bMark;
+	int bDark, bGas, bStar, bMark, bGrp, bGtp, bPot;
 	int nBucket, nMembers, nSmooth, sec, usec;
 	float fOmega, fLambda, fRedshift, fThreshold, fMinMass, fPeriod[3], fCenter[3];
 	float fMassUnit, fMpcUnit;
 	float G, H0;
-	char *achGTPFile, *achListFile, *achOutFileBase, *achMarkFile;
+	char *achGTPFile, *achListFile, *achOutFileBase, *achMarkFile, *achStatFile;
 	char achDefOutBase[3], achLongWord[128];
 	time_t timeRun;
 	FILE *fpOutFile;
 
-	fprintf(stderr,"SO Release 1.3: Jeff Gardner, Jan 2000\n");
+	fprintf(stderr,"SO Release 1.4: Jeff Gardner, Feb 2000\n");
 	strcpy(achDefOutBase,"so");
 	/*
 	 ** Bucket size set to 16, user cannot affect this!
@@ -156,12 +171,15 @@ int main(int argc,char **argv)
 	bStar=0;
 	bGas=0;
 	bMark=0;
-	
+	bGrp=0;
+	bGtp=0;
+	bPot=0;
 
 	achGTPFile=NULL;
 	achListFile=NULL;
 	achOutFileBase=NULL;
 	achMarkFile=NULL;
+	achStatFile=NULL;
 	/*
 	 ** Now get the command line arguments!
 	 */
@@ -275,6 +293,26 @@ int main(int argc,char **argv)
 		achListFile = argv[i];
 		++i;
 	    }
+	    else if (!strcmp(argv[i],"-grp")) {
+		bGrp = 1;
+		++i;
+	    }
+	    else if (!strcmp(argv[i],"-gtp")) {
+		bGtp = 1;
+		++i;
+	    }
+	    else if (!strcmp(argv[i],"-pot")) {
+		bPot = 1;
+		++i;
+		if (achStatFile != NULL) usage();
+	    }
+	    else if (!strcmp(argv[i],"-stat")) {
+		++i;
+		if (i >= argc) usage();
+		achStatFile = argv[i];
+		++i;
+		if (bPot) usage();
+	    }
 	    else if (!strcmp(argv[i],"-mark")) {
 		++i;
 		if (i >= argc) usage();
@@ -306,12 +344,12 @@ int main(int argc,char **argv)
 	if (achGTPFile==NULL) usage();
 	if (achOutFileBase==NULL) 
 	    achOutFileBase=achDefOutBase;
-      
+	
 
 	if (bLambda)
 	    fLambda=1.0-fOmega;
 
-	kdInit(&kd,nBucket,fPeriod,fCenter,0,nMembers,bPeriodic,bDark,bGas,bStar,bMark);
+	kdInit(&kd,nBucket,fPeriod,fCenter,0,nMembers,bPeriodic,bDark,bGas,bStar,bMark,bPot);
 	/*
 	 * Read TIPSY file to get redshift 
 	 */
@@ -346,11 +384,13 @@ int main(int argc,char **argv)
 	fpOutFile = fopen(achLongWord,"w");
 	assert(fpOutFile != NULL);
 	time(&timeRun);
-	fprintf(fpOutFile,"#SO v1.0: Jeff Gardner, Jan 2000\n");
+	fprintf(fpOutFile,"#SO v1.4: Jeff Gardner, Feb 2000\n");
 	fprintf(fpOutFile,"# Run on %s",ctime(&timeRun));
 	fprintf(fpOutFile,"# Input .gtp file: %s\n",achGTPFile);
 	if (achListFile != NULL)
 	    fprintf(fpOutFile,"# Groups list from file: %s\n",achListFile);
+	if (achStatFile != NULL)
+	    fprintf(fpOutFile,"# Group potential centers from file: %s\n",achStatFile);
 	if (bThreshold) {
 	    fprintf(fpOutFile,"# fThreshold = %g  (set by user)\n",fThreshold);
 	} else {
@@ -359,7 +399,7 @@ int main(int argc,char **argv)
 	fprintf(fpOutFile,"# fRedshift: %g   fOmega: %g   fLambda: %g\n",fRedshift,fOmega,fLambda);
 	fprintf(fpOutFile,"# bPeriodic: %d  fPeriod[i]: %g %g %g   fCenter[i]: %g %g %g\n",
 	      bPeriodic,fPeriod[0],fPeriod[1],fPeriod[2],fCenter[0],fCenter[1],fCenter[2]);
-	fprintf(fpOutFile,"# fMinMass: %g  nMembers: %d\n",fMinMass,nMembers);
+	fprintf(fpOutFile,"# fMinMass: %g  nMembers: %d  bPot: %d\n",fMinMass,nMembers,bPot);
 	if (fMassUnit < 0.0) {
 	    fprintf(fpOutFile,"# fMassUnit: UNSPECIFIED  fMpcUnit: UNSPECIFIED\n#\n");
 	} else {
@@ -375,6 +415,19 @@ int main(int argc,char **argv)
 	 */
 	i=kdReadGTPList(kd,achGTPFile,achListFile,fMinMass,bStandard);
 	fprintf(stderr,"Read %d groups to process.\n",i);
+
+	/*
+	 * Replace centers with position of most bound particles from .stat file
+	 * if requested
+	 */
+	if (achStatFile != NULL) {
+	    j=kdReadStat(kd,achStatFile);
+	    fprintf(stderr,"Replaced %d group centers.\n",j);
+	    if (i != j ) {
+		fprintf(stderr,"ERROR in reading .stat file!\n");
+		exit(1);
+	    }
+	}
 
 	/*
 	 * SO all groups in list
@@ -396,6 +449,10 @@ int main(int argc,char **argv)
 	    kdWriteProfile(kd,achOutFileBase,timeRun,fpOutFile,MARK);
 	kdWriteOut(kd,fpOutFile);
 	fclose(fpOutFile);
+	if (bGrp)
+	    kdWriteArray(kd,achOutFileBase);
+	if (bGtp)
+	    kdWriteGTP(kd,achOutFileBase,bStandard);
 
 	fprintf(stderr,"SO CPU Time:");
 	fprintf(stderr,"   %d.%06d\n\n",sec,usec);

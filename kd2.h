@@ -35,11 +35,12 @@ typedef struct pInitial {
 	float r[3];
 	float v[3];
 	float fMass;
-	float fSoft;
+	float fPhi;
 	float fTemp;
 	float fBall2;
 	float fDensity;
 	int iOrder;
+        int iGrp;
 	} PINIT;
 
 typedef struct pMoved {
@@ -76,6 +77,7 @@ typedef struct kdNode {
 typedef struct grpNode {
     int index;
     float pos[3];
+    float vcm[3];
     float fRgtp;
     float fMvir;
     float fRvir;
@@ -128,6 +130,8 @@ typedef struct kdContext {
         int bStar;
         int bMark;
         char *bMarkList;
+        int bPot;
+        int nInGTP;
 	} * KD;
 
 
@@ -236,10 +240,11 @@ typedef struct kdContext {
 
 
 void kdTime(KD,int *,int *);
-int kdInit(KD *,int,float *,float *,int,int,int,int,int,int,int);
+int kdInit(KD *,int,float *,float *,int,int,int,int,int,int,int,int);
 void kdSetUniverse(KD,float,float,float,float,float,float,float);
 int kdParticleType(KD,int);
 int kdReadMark(KD, char *);
+int kdReadStat(KD, char *);
 int kdReadGTPList(KD, char *, char *, float, int);
 int kdReadTipsy(KD,FILE *,int);
 void kdSO(KD, float, int);
@@ -247,11 +252,8 @@ void kdWriteProfile(KD, char *, time_t, FILE *, int);
 void kdWriteOut(KD, FILE *);
 int kdBuildTree(KD);
 void kdFinish(KD);
+void kdWriteArray(KD, char *);
+void kdWriteGTP(KD, char *, int);
 
 #endif
-
-
-
-
-
 
