@@ -276,7 +276,7 @@ int kdReadStat(KD kd, char *achStatFile)
 	if (grpnum == kd->grps[k].index) {   /* Replace center */
 	    /*fprintf(stderr,"Replaced grp %d pos: %g %g %g  to  pos: %g %g %g\n",
 		    kd->grps[k].index,kd->grps[k].pos[0],kd->grps[k].pos[1],
-		    kd->grps[k].pos[2],r[0],r[1],r[2]);/*
+		    kd->grps[k].pos[2],r[0],r[1],r[2]);*/
 	    for (j=0;j<3;++j) {
 		kd->grps[k].pos[j] = r[j];
 	    }
