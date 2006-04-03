@@ -1,3 +1,24 @@
+/* SO v1.5:
+ *   -- Improved file error handling.
+ *   -- -rho option removed and replaced with -delta in light of Jenkins et al (2001) results.
+ *   -- The biggest change is that the halos are now processed in increasing order of input mass.
+ *      This allows smaller halos to be subsumed by larger ones.  Before now, there was no
+ *      deterministic behavior the virial radii of two halos overlapped and they "shared"
+ *      particles.  Now, if two halos are vying for the same particle, the following occurs:
+ *          1) If the smaller-mass halo is centered *inside* the SO radius of the larger-mass halo,
+ *             the larger-mass halos completely subsumes all particles of the the smaller one
+ *  	       which are inside its (the larger group's) SO radius.  Particles outside
+ *             the larger group's SO radius are set to group ID 0.  The SO radius of the smaller
+ *	       group is set to -10.0*(larger-group).  The virial mass is multiplied by -1.
+ *	    2) If the smaller-mass halo is centered *outside* th SO radius of the larger-mass halo,
+ *             It retains ownership of all of its particles.  The larger halo will still use
+ *             the smaller halo's particles when calculating it's own mass, radius, etc., but
+ *             will not claim those particles as its own in .sogrp files.  This means that
+ *             The total mass in SO groups can be greater than the total mass of particles
+ *             with group ID > 0 in the .sogrp file.  This is usually not a larger effect.
+ *      This change allows SKID .gtp files to be used as the input rather than FOF!
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -43,11 +64,11 @@ double rhovir_over_rhobar(double Omega0, int Lambda_OPT, double z)
 void usage(void)
 {
     fprintf(stderr,"USAGE:\n");
-    fprintf(stderr,"so -i <FOF .gtp file> [-o <outfilebase>] [([-dark] [-gas] [-star]) || [-all])]\n");
-    fprintf(stderr,"      [-mark <markfile>]  [-std]  [-grp] [-gtp] \n");
+    fprintf(stderr,"so -i <SKID .gtp file> [-o <outfilebase>] [([-dark] [-gas] [-star]) || [-all])]\n");
+    fprintf(stderr,"      [-mark <markfile>]  [-std]  [-grp] [-gtp] [-subsumed] [-ignored]\n");
     fprintf(stderr,"      [-list <File containing group indexes>]\n");
     fprintf(stderr,"      [-pot || -stat <SKID .stat file containing most-bound-particle positions>]\n");
-    fprintf(stderr,"      [-rho <fThreshold>] [-M <fMinGTPMass>] [-m <mMinSOMembers>]\n");
+    fprintf(stderr,"      [-delta <fThreshold>] [-M <fMinGTPMass>] [-m <mMinSOMembers>]\n");
     fprintf(stderr,"      [-O <fOmega0>]  [-L]  [-z <fRedshift>]\n");
     fprintf(stderr,"      [-p <xyzPeriod>]  [-c <xyzCenter>]\n");
     fprintf(stderr,"      [-cx <xCenter>]  [-cy <yCenter>]  [-cz <zCenter>]\n");
@@ -78,9 +99,9 @@ void usage(void)
     fprintf(stderr,"       This method is preferable to to -pot as SKID constructs potentials from\n");
     fprintf(stderr,"       only those particles in the group and is not subject to the global\n");
     fprintf(stderr,"       potential field.  NOTE: this requires SKID revisions from 2/25/00.\n");
-    fprintf(stderr,"   -rho: By default, <fThreshold> is calculated automatically from cosmological\n");
+    fprintf(stderr,"   -delta: By default, <fThreshold> is calculated automatically from cosmological\n");
     fprintf(stderr,"       parameters to be the virial density, but may be overridden using the\n");
-    fprintf(stderr,"       -rho option.\n");
+    fprintf(stderr,"       -delta option by specifying the overdensity of the threshold.\n");
     fprintf(stderr,"   -L: option will set Lambda0 = 1-Omega0.\n");
     fprintf(stderr,"   -p: THIS VERSION ASSUMES PERIODIC BOUNDRY CONDITIONS.  Default period = 1\n");
     fprintf(stderr,"   -z: <fRedshift> will be automatically calculated as 1/h.time-1 where h.time\n");
@@ -94,6 +115,9 @@ void usage(void)
     fprintf(stderr,"   -u: Output is in system units unless simulation units are specified with -u\n");
     fprintf(stderr,"       option, whereupon output will be in the form:\n");
     fprintf(stderr,"       Mass [Msol], Distance [kpc], Velocity [km/s].\n");
+    fprintf(stderr,"   -subsumed/-ignored: causes .sosub/.soign TIPSY array files to be written\n");
+    fprintf(stderr,"       which give the number of times a particle was subsumed into a larger\n");
+    fprintf(stderr,"       group or ignored by a larger group because it belonged to a smaller one.\n");
     fprintf(stderr,"  See output file header for output format.\n");
     fprintf(stderr,"  Groupwise error codes are returned in Mvir and Rvir columns as follows:\n");
     fprintf(stderr,"     -1.0:  Fewer than nMembers particles within 1.2 times group's .grp radius\n");
@@ -110,7 +134,7 @@ int main(int argc,char **argv)
 
 	int i,j;
 	int bThreshold, bStandard, bLambda, bPeriodic, bRedshift;
-	int bDark, bGas, bStar, bMark, bGrp, bGtp, bPot;
+	int bDark, bGas, bStar, bMark, bGrp, bGtp, bPot, bSubsumed, bIgnored;
 	int nBucket, nMembers, nSmooth, sec, usec;
 	float fOmega, fLambda, fRedshift, fThreshold, fMinMass, fPeriod[3], fCenter[3];
 	float fMassUnit, fMpcUnit;
@@ -120,7 +144,7 @@ int main(int argc,char **argv)
 	time_t timeRun;
 	FILE *fpOutFile;
 
-	fprintf(stderr,"SO Release 1.4: Jeff Gardner, Feb 2000\n");
+	fprintf(stderr,"SO Release 1.5: Jeff Gardner, Nov 2000\n");
 	strcpy(achDefOutBase,"so");
 	/*
 	 ** Bucket size set to 16, user cannot affect this!
@@ -174,6 +198,8 @@ int main(int argc,char **argv)
 	bGrp=0;
 	bGtp=0;
 	bPot=0;
+        bSubsumed=0;
+        bIgnored=0;
 
 	achGTPFile=NULL;
 	achListFile=NULL;
@@ -221,6 +247,12 @@ int main(int argc,char **argv)
 		++i;
 	    }
 	    else if (!strcmp(argv[i],"-rho")) {
+		++i;
+                fprintf(stderr,"-rho option is no longer availible.  Use -delta instead.\n");
+                usage();
+		++i;
+	    }
+	    else if (!strcmp(argv[i],"-delta")) {
 		++i;
 		if (i >= argc) usage();
 		fThreshold = atof(argv[i]);
@@ -306,6 +338,14 @@ int main(int argc,char **argv)
 		++i;
 		if (achStatFile != NULL) usage();
 	    }
+	    else if (!strcmp(argv[i],"-subsumed")) {
+		bSubsumed = 1;
+		++i;
+	    }
+	    else if (!strcmp(argv[i],"-ignored")) {
+		bIgnored = 1;
+		++i;
+	    }
 	    else if (!strcmp(argv[i],"-stat")) {
 		++i;
 		if (i >= argc) usage();
@@ -375,7 +415,10 @@ int main(int argc,char **argv)
 	 */
 	if (!bThreshold) {
 	    fThreshold = rhovir_over_rhobar(fOmega,bLambda,fRedshift) * fOmega;
-	}
+	} else {  /* If set by user, convert from overdensity to density */
+            fThreshold *= fOmega;
+        }
+        
 
 	/*
 	 * Output various parameters for log purposes
@@ -384,7 +427,7 @@ int main(int argc,char **argv)
 	fpOutFile = fopen(achLongWord,"w");
 	assert(fpOutFile != NULL);
 	time(&timeRun);
-	fprintf(fpOutFile,"#SO v1.4: Jeff Gardner, Feb 2000\n");
+	fprintf(fpOutFile,"#SO v1.5: Jeff Gardner, Nov 2000\n");
 	fprintf(fpOutFile,"# Run on %s",ctime(&timeRun));
 	fprintf(fpOutFile,"# Input .gtp file: %s\n",achGTPFile);
 	if (achListFile != NULL)
@@ -436,6 +479,12 @@ int main(int argc,char **argv)
 	kdSO(kd,fThreshold,nSmooth);
 	kdTime(kd,&sec,&usec);
 
+        /*
+         * Stats
+         */
+        kdOutStats(kd,fpOutFile);
+        
+
 	/*
 	 * Output
 	 */
@@ -453,6 +502,11 @@ int main(int argc,char **argv)
 	    kdWriteArray(kd,achOutFileBase);
 	if (bGtp)
 	    kdWriteGTP(kd,achOutFileBase,bStandard);
+        if (bSubsumed)
+            kdWriteConflict(kd,achOutFileBase,KD_SUBSUMED);
+        if (bIgnored)
+            kdWriteConflict(kd,achOutFileBase,KD_IGNORED);
+        
 
 	fprintf(stderr,"SO CPU Time:");
 	fprintf(stderr,"   %d.%06d\n\n",sec,usec);

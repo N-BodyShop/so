@@ -4,8 +4,12 @@
 #include "cosmo.h"
 #include <sys/time.h>
 
+#define sqr(x) ((x)*(x))
+
 /* Number of Vcirc bins */
 #define NVCIRC 8
+/* Number of mass profile bins */
+#define NMASSPROFILE 16
 
 #define FLOAT float
 
@@ -31,6 +35,9 @@
 #define PLUMMER		1
 #define SPLINE		2
 
+#define KD_SUBSUMED 0
+#define KD_IGNORED 1
+
 typedef struct pInitial {
 	float r[3];
 	float v[3];
@@ -41,6 +48,8 @@ typedef struct pInitial {
 	float fDensity;
 	int iOrder;
         int iGrp;
+        int nSubsumed;
+        int nIgnored;
 	} PINIT;
 
 typedef struct pMoved {
@@ -78,17 +87,18 @@ typedef struct grpNode {
     int index;
     float pos[3];
     float vcm[3];
-    float fRgtp;
+    float fRgtp;    /* Radius of input GTP group */
+    float fGTPMass; /* Mass of GTP input group (used for mass sort) */
     float fMvir;
     float fRvir;
     float fVcirc[NVCIRC];
     float fRmass[2];  /* quarter and half mass radii */
     float fRmax;
     float fVmax;
-    float fDark[NVCIRC];
-    float fGas[NVCIRC];
-    float fStar[NVCIRC];
-    float fMark[NVCIRC];
+    float fDark[NMASSPROFILE];
+    float fGas[NMASSPROFILE];
+    float fStar[NMASSPROFILE];
+    float fMark[NMASSPROFILE];
 } GRPNODE;
 
 typedef struct kdContext {
@@ -132,6 +142,11 @@ typedef struct kdContext {
         char *bMarkList;
         int bPot;
         int nInGTP;
+    int iGroupsRemoved;
+    int iParticlesRemoved;
+    int iParticlesIgnored;
+    float fMassRemoved;
+    float fMassIgnored;
 	} * KD;
 
 
@@ -252,8 +267,13 @@ void kdWriteProfile(KD, char *, time_t, FILE *, int);
 void kdWriteOut(KD, FILE *);
 int kdBuildTree(KD);
 void kdFinish(KD);
+void kdWriteConflict(KD kd, char *achOutFileBase, int iOpt);
+void kdOutStats(KD kd, FILE *fpOutFile);
 void kdWriteArray(KD, char *);
 void kdWriteGTP(KD, char *, int);
 
+void indexx(int n, float arr[], int indx[]);
+
 #endif
+
 
