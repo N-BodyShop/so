@@ -1,9 +1,3 @@
-/* Groups indexing:
- *   The GROUP LIST starts at 0
- *   The GROUP.index field starts at 1
- *   (hence GROUP.index = GROUP.LIST+1 if all groups are read in
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
@@ -18,14 +12,6 @@
 
 #define max(A,B) ((A) > (B) ? (A) : (B))
 #define min(A,B) ((A) < (B) ? (A) : (B))
-
-void kdCheckFile(FILE *fp, char *name)
-{
-    if (fp == NULL) {
-        fprintf(stderr,"ERROR opening file %s\n",name);
-        exit(1);
-    }
-}
 
 int xdrHeader(XDR *pxdrs,struct dump *ph)
 {
@@ -105,7 +91,6 @@ int kdInit(KD *pkd,int nBucket,float *fPeriod,float *fCenter,int bOutDiag,
         kd->bMark = bMark;
 	kd->bMarkList = NULL;
 	kd->bPot = bPot;
-        kd->iGroupsRemoved = 0;
 	return(1);
 	}
 
@@ -144,7 +129,7 @@ int kdReadMark(KD kd, char *achMarkFile)
     FILE *in;
 
     in = fopen(achMarkFile,"r");
-    kdCheckFile(in,achMarkFile);
+    assert(in != NULL);
 
     assert(kd->bMarkList == NULL);
     kd->bMarkList = (char *) malloc(kd->nParticles*sizeof(char));
@@ -164,6 +149,7 @@ int kdReadMark(KD kd, char *achMarkFile)
     fclose(in);
     return(nmark);
 }
+    
 
 int kdReadGTPList(KD kd, char *achGTPFile, char *achListFile,
 		     float fMinMass, int bStandard)
@@ -185,7 +171,6 @@ int kdReadGTPList(KD kd, char *achGTPFile, char *achListFile,
 	    fofList=(int *) malloc(fofAllocSize*sizeof(int));
 	    assert(fofList != NULL);
 	    fp = fopen(achListFile,"r");
-            kdCheckFile(fp,achListFile);
 	    assert(fp != NULL);
 	    while(fscanf(fp,"%d",&fofgrpnum) != EOF) {
 		++nFof;
@@ -203,8 +188,6 @@ int kdReadGTPList(KD kd, char *achGTPFile, char *achListFile,
 	 * Read in GTP file
 	 */
 	fp = fopen(achGTPFile,"rb");
-        kdCheckFile(fp,achGTPFile);
-
 	if (bStandard) {
 	    assert(sizeof(Real)==sizeof(float)); /* Otherwise, this XDR stuff
 						    ain't gonna work */
@@ -247,9 +230,6 @@ int kdReadGTPList(KD kd, char *achGTPFile, char *achListFile,
 			kd->grps[k].pos[j] = GTP_particles[fofList[i]-1].pos[j];
 		    }
 		    kd->grps[k].fRgtp = GTP_particles[fofList[i]-1].eps;
-                    kd->grps[k].fGTPMass = GTP_particles[fofList[i]-1].mass;
-/*                    fprintf(stderr,"GrpIndex: %i  GTPMass: %g\n",
-                      fofList[i],kd->grps[k].fGTPMass);*/
 		    kd->grps[k].index = fofList[i];
 		    ++k;
 		}
@@ -265,9 +245,6 @@ int kdReadGTPList(KD kd, char *achGTPFile, char *achListFile,
 			kd->grps[k].pos[j] = GTP_particles[i].pos[j];
 		    }
 		    kd->grps[k].fRgtp = GTP_particles[i].eps;
-                    kd->grps[k].fGTPMass = GTP_particles[i].mass;
-/*                    fprintf(stderr,"GrpIndex: %i  GTPMass: %g\n",
-                      i,kd->grps[k].fGTPMass);*/
 		    kd->grps[k].index = i+1;
 		    ++k;
 		}
@@ -289,8 +266,7 @@ int kdReadStat(KD kd, char *achStatFile)
 
     assert(achStatFile != NULL);
     fp = fopen(achStatFile,"r");
-    kdCheckFile(fp,achStatFile);
-
+    assert(fp != NULL);
     k=0;
     while(fscanf(fp,"%d %d",&grpnum,&itemp) != EOF) {
 	for (i=0;i<16;++i) {
@@ -357,8 +333,6 @@ int kdReadTipsy(KD kd,FILE *fp, int bStandard)
 	for (i=0;i<kd->nParticles;++i) {
 		p[i].iOrder = i;
 		p[i].iGrp = 0;
-                p[i].nSubsumed = 0;
-                p[i].nIgnored = 0;
 		p[i].fDensity = 0.0;
 		switch (kdParticleType(kd,i)) {
 		case (GAS):
@@ -457,10 +431,10 @@ void kdMassProfile(KD kd, SMX smx, GRPNODE *grp, float rvir, int nParticles, int
     int i,j;
     float f,fmin,r,r2,mass;
 
-    fmin=2.0/NMASSPROFILE;  /* NMASSPROFILE is number if bins...this sets increments */
+    fmin=2.0/NVCIRC;  /* NVCIRC is number if Vcirc bins...this sets increments */
     j=0;
     mass=0.0;
-    for(f=fmin,i=0;i<NMASSPROFILE-1;++i,f+=fmin) {  /* f is fraction of Rvir */
+    for(f=fmin,i=0;i<NVCIRC-1;++i,f+=fmin) {  /* f is fraction of Rvir */
 	r=f*rvir;
 	r2=r*r;
     	while(smx->nnList[j].fDist2 < r2 && j < nParticles) {
@@ -488,7 +462,7 @@ void kdMassProfile(KD kd, SMX smx, GRPNODE *grp, float rvir, int nParticles, int
 	}
 	++j;
     }
-    addProfileMass(grp,NMASSPROFILE-1,mass,ptype);
+    addProfileMass(grp,NVCIRC-1,mass,ptype);
 
 }
 
@@ -589,114 +563,12 @@ float rhoEnclosed(float mass, float r2)
     return mass / (1.33333333*M_PI*r3);  /* (1.333333=4/3) */
 }
 
-void _VcmParticles(SMX smx, GRPNODE *grp, int j, float mass) 
-{
-    int k,l;
     
-    for (k=0;k<j;++k) {
-        for (l=0;l<3;l++)
-            grp->vcm[l] += smx->nnList[k].pInit->fMass*smx->nnList[k].pInit->v[l];
-    }
-    
-    for (l=0;l<3;l++)
-        grp->vcm[l] /= mass;
-}
-
-
-/* This is really inelegant, but it's the easiest way and still
- * seems to be reasonably fast.
- */
-void kdZeroGroup(KD kd, GRPNODE *grpSmall, GRPNODE *grpBig)
-{
-    int i;
-    PINIT *pp;
-    float mr0;
-    int ipr0;
-    
-    mr0 = kd->fMassRemoved;
-    ipr0 = kd->iParticlesRemoved;
-    if (grpSmall->fMvir < 0.0) {
-        fprintf(stderr,"\nERROR in kdZeroGroup:\n");
-        fprintf(stderr,"Zeroed group mass is already negtive!\n");
-        fprintf(stderr,"  OldGrp: %d  NewGrp: %d  fMvir: %g  Rvir: %g\n",
-                grpSmall->index,grpBig->index,grpSmall->fMvir,grpSmall->fRvir);
-        assert(0);
-    }
-    grpSmall->fRvir = -10.0*grpBig->index;
-    grpSmall->fMvir = -grpSmall->fMvir;
-    for (i=0, pp=&kd->pInit[0]; i<kd->nParticles; ++i, ++pp) {
-        if (pp->iGrp == grpSmall->index) {
-            pp->iGrp = 0;
-            ++pp->nSubsumed;
-        }
-    }    
-}
-
-
-/* Returns the GRPNODE of the group with Index iGrp */
-GRPNODE *kdFindGroup(KD kd, int iGrp)
-{
-    int i;
-    GRPNODE *gg;
-    
-    i=0;
-    gg=&kd->grps[0];
-    while(gg->index!=iGrp) {
-        ++gg;
-        ++i;
-        assert(i<kd->nGrps);
-    }
-    return gg;
-}
-
-
-void kdTagParticles(KD kd, SMX smx, GRPNODE *grpBig, int n)
-{   
-    int k;
-    float dx,dy,dz,r2;
-    GRPNODE *grpSmall;
-    
-    for (k=0;k<n;++k) {
-        if (smx->nnList[k].pInit->iGrp != 0) { /* Particle already in Group */
-            grpSmall = kdFindGroup(kd,smx->nnList[k].pInit->iGrp);
-            dx = grpBig->pos[0] - grpSmall->pos[0];
-            dy = grpBig->pos[1] - grpSmall->pos[1];
-            dz = grpBig->pos[2] - grpSmall->pos[2];
-            r2 = dx*dx + dy*dy + dz*dz;
-            /* Center of smaller group is within Rvir of larger group.
-             * Remove smaller group. */
-            if ( r2 <= sqr(grpBig->fRvir) ) {
-/*                if (smx->nnList[k].pInit->iGrp == 143 || smx->nnList[k].pInit->iGrp == 147) {
-                    fprintf(stderr,"Zeroing group %d(indx=%d): %g, %g, %g,\n   subsumed by group %d: %g, %g, %g\n",
-                            smx->nnList[k].pInit->iGrp,grpSmall->index,
-                            grpSmall->pos[0],grpSmall->pos[1],grpSmall->pos[2],
-                            grpBig->index, grpBig->pos[0], grpBig->pos[1], grpBig->pos[2]);
-                    fprintf(stderr,"   r: %g  fRvir: %g\n",sqrt(r2),grpBig->fRvir);
-                    }*/
-                kdZeroGroup(kd,grpSmall,grpBig);
-                ++kd->iGroupsRemoved;
-            } else {
-/*                if (smx->nnList[k].pInit->iGrp == 143 || smx->nnList[k].pInit->iGrp == 147) {
-                    fprintf(stderr,"Ignoring group %d(indx=%d): %g %g %g,\n   encroached by group %d: %g, %g, %g\n",
-                            smx->nnList[k].pInit->iGrp,grpSmall->index,
-                            grpSmall->pos[0],grpSmall->pos[1],grpSmall->pos[2],
-                            grpBig->index, grpBig->pos[0], grpBig->pos[1], grpBig->pos[2]);
-                    fprintf(stderr,"   r: %g  fRvir: %g\n",sqrt(r2),grpBig->fRvir);
-                    }*/
-                ++smx->nnList[k].pInit->nIgnored;
-            }
-        } else {
-            smx->nnList[k].pInit->iGrp=grpBig->index;
-        }
-    }
-}
-
 
 float kdRvir(KD kd, SMX smx, float fRhoVir, GRPNODE *grp)
 {
     int i,j,k,l,jlast,nParticles;
     float mass,fBall,fBall2,r,r3,rho,minPot,ballCtr[3];
-    float fRootPeriod;
     
     /*
      *  Beginning at 1.2 Rgtp, gather all particles and sort them in order
@@ -715,51 +587,60 @@ float kdRvir(KD kd, SMX smx, float fRhoVir, GRPNODE *grp)
     jlast=0;
     mass = 0.0;
     fBall = grp->fRgtp;                  /* Start at 1.2 Rvir */
-    for (k=0;k<3;++k) ballCtr[k] = grp->pos[k];  /* Initialize ballCenter to GRP center */
+    for (k=0;k<3;++k) ballCtr[k] = grp->pos[k];  /* Always do first search on GRP center */
+    /*fprintf(stderr,"In kdRvir: index: %d  fRgtp: %g  pos: %g %g %g\n",grp->index,
+      grp->fRgtp,grp->pos[0],grp->pos[1],grp->pos[2]);*/
 
-    /* Find most bound particle if applicable, replacing group center */
+    /* Find most bound particle if applicable */
     if (kd->bPot) {              
 	fBall2 = fBall*fBall;
 	nParticles = smBallGather(smx,fBall2,ballCtr);
+	/*fprintf(stderr,"Old center: %g %g %g\n",ballCtr[0],ballCtr[1],ballCtr[2]);*/
 	minPot = smx->nnList[0].pInit->fPhi;
 	for (k=0;k<3;k++) ballCtr[k] = smx->nnList[0].pInit->r[k];
 	for (i=1;i<nParticles;++i) {
 	    if (smx->nnList[i].pInit->fPhi < minPot) {
+		/*if (grp->index==220) {
+		    fprintf(stderr,"minPot0: %g  minPot1: %g  pos: %g %g %g\n",minPot,
+			    smx->nnList[i].pInit->fPhi,smx->nnList[i].pInit->r[0],
+			    smx->nnList[i].pInit->r[1],smx->nnList[i].pInit->r[2]);
+		    minPot = smx->nnList[i].pInit->fPhi;
+		    }*/
 		for (k=0;k<3;k++) ballCtr[k] = smx->nnList[i].pInit->r[k];
-                minPot = smx->nnList[i].pInit->fPhi;
 	    }		    
 	}
-        for (k=0;k<3;++k) grp->pos[k] = ballCtr[k];  /* Replace GRP center */
+	/*fprintf(stderr,"%d: %g %g %g\n",grp->index,ballCtr[0],ballCtr[1],ballCtr[2]);*/
     }
     
 
-    /* Iterate until virial radius found, declaring defeat by 0.25 period */
-    fRootPeriod = sqrt(sqr(kd->fPeriod[0]) + sqr(kd->fPeriod[1]) + sqr(kd->fPeriod[2]));
-    while(fBall < (0.25 * fRootPeriod)) {
+    while(fBall < (3.0 * grp->fRgtp)) {  /* Declare defeat by 3 Rgtp */
 	fBall *= 1.2;                           /* Increase by 20% each iteration */
 	fBall2 = fBall*fBall;
-	nParticles = smBallGather(smx,fBall2,ballCtr); /* Get all particles in ball */
+	nParticles = smBallGather(smx,fBall2,ballCtr);
 	
-        /* Declare failure if first time through and not enough particles */
-	if (!jlast) {
-	    if (nParticles < kd->nMembers) {
+	if (!jlast) {                    /* First time through */
+	    if (nParticles < kd->nMembers) {   /* Declare failure if not enough particles */
 		grp->fRvir=-1.0;
 		grp->fMvir=-1.0;
 		return(-1.0);   
 	    }
 	}
 		
-	/* Sort particles in ball according to distance from center */
+	/* Sort according to distance from center */
+	/*fprintf(stderr,"fBall: %g  fBall2: %g  nParticles: %d\n",fBall,fBall2,nParticles);*/
 	qsort(smx->nnList,nParticles,sizeof(NN),CmpList);
+	/*for (i=0;i<8;++i) {
+	    fprintf(stderr,"%g  ",smx->nnList[i-1].fDist2);
+	    }*/
 
-        /* Special loop for first time through to check if virial radius
-         * found before minimal number of group members */
-	if (!jlast) {
-	    for(j=0;j<kd->nMembers-1;++j) {
+	if (!jlast) {                          /* First time through */
+	    for(j=0;j<kd->nMembers;++j) {
 		mass += smx->nnList[j].pInit->fMass;
 	    }
-            /* Declare failure if already below density for this particle 
-             * *and* the next one */
+	    /*r3 = smx->nnList[j-1].fDist2*sqrt(smx->nnList[j-1].fDist2);
+	      rho = mass / ((4./3.)*M_PI*r3); */
+	    /* fprintf(stderr,"\n%d: %g  %g\n,",j-1,r3,rho); */
+            /* Declare failure if already below density for this particle *and* the next one */
 	    if (rhoEnclosed(mass,smx->nnList[j-1].fDist2) < fRhoVir &&
 		rhoEnclosed(mass+smx->nnList[j].pInit->fMass,smx->nnList[j].fDist2) < fRhoVir ) {
 		grp->fRvir=-2.0;
@@ -768,21 +649,13 @@ float kdRvir(KD kd, SMX smx, float fRhoVir, GRPNODE *grp)
 	    }
 	    jlast=j;
 	}
-
-
-        /* 
-         * Main loop to find virial radius
-         */
 	for(j=jlast;j<nParticles-1;j++) {
-
-            /* Iterate on the following statement until virial radius found */
 	    mass += smx->nnList[j].pInit->fMass;
-
+	    /*r = sqrt(smx->nnList[j].fDist2);
+	    r3 = r*smx->nnList[j].fDist2;
+	    rho = mass / ((4./3.)*M_PI*r3);*/
 	    /* Again, virial radius criterion is that density for this and next
-	     * Next particle is below fRhoVir.
-             * If this condition obtains, execute following the IF statement and
-             * return from subroutine. 
-             */
+	     * Next particle is below fRhoVir */
 	    if(rhoEnclosed(mass,smx->nnList[j].fDist2) < fRhoVir &&
 	       rhoEnclosed(mass+smx->nnList[j+1].pInit->fMass,smx->nnList[j+1].fDist2) < fRhoVir) {
 		mass -= smx->nnList[j].pInit->fMass;  /* now "mass" is mass *within* Rvir */
@@ -790,71 +663,47 @@ float kdRvir(KD kd, SMX smx, float fRhoVir, GRPNODE *grp)
 		r=pow(r3,0.3333333333);
 		grp->fRvir=r;
 		grp->fMvir=mass;
+		/* Tag all particles that are within fRvir and find grp mean velocity */
+		for (k=0;k<j;++k) {
+		    smx->nnList[k].pInit->iGrp=grp->index;
+		    /*fprintf(stderr,"  iGrp1: %d   iOrder: %d  pos: %g %g %g\n",
+			    smx->nnList[k].pInit->iGrp,smx->nnList[k].pInit->iOrder,
+			    smx->nnList[k].pInit->r[0],smx->nnList[k].pInit->r[1],
+			    smx->nnList[k].pInit->r[2]);*/
+		    for (l=0;l<3;l++)
+			grp->vcm[l] += smx->nnList[k].pInit->fMass*smx->nnList[k].pInit->v[l];
+		}
+		for (l=0;l<3;l++)
+		    grp->vcm[l] /= mass;
 
-		/* Tag all particles that are within fRvir */
-                kdTagParticles(kd,smx,grp,j); 
-
-                /* Find grp mean velocity */
-                _VcmParticles(smx,grp,j,mass);
-                
-                /* Done! */
 		return(r);
 	    }
 	}
 	jlast=j;     /* Rvir not found...redo loop with larger ball size */
     }
 
-
-    /* Virial radius not found.  Return errorcode */
-    grp->fRvir=-3.0;
-    grp->fMvir=-3.0;
+    grp->fRvir=-r;
+    grp->fMvir=-mass;
     return(-3.0);
 }
-
-        
-int *kdSortMass(KD kd)
-{
-    int i;
-    float *fMasses;
-    int *indx;
-    
-    fMasses = (float *) malloc(kd->nGrps*sizeof(float));
-    assert(fMasses != NULL);
-    for (i=0;i<kd->nGrps;++i) {
-        fMasses[i] = kd->grps[i].fGTPMass;
-/*        fprintf(stderr,"fMasses[%d]: %g  GTPMass[%d]: %g\n",i,fMasses[i],
-          i,kd->grps[i].fGTPMass); */
-    }
-    indx=(int *) malloc(kd->nGrps*sizeof(int));
-    assert(indx!=NULL);
-    indexx(kd->nGrps,fMasses-1,indx-1);
-    free(fMasses);
-    return indx;
-}
-
-
+	
 void kdSO(KD kd, float rhovir, int nSmooth)
 {
     int i;
-    int *iMassIndex;
     float fBall2, rvir;
     SMX smx;
 
     smInit(&smx,kd,nSmooth);
-    /* Sort array according to GTP mass (ascending order) */
-    iMassIndex = kdSortMass(kd);
-
-    for (i=0; i<kd->nGrps ; ++i) {
+    for (i=0;i<kd->nGrps;++i) {
 	/*
 	 * Find virial radius
 	 */
-	rvir=kdRvir(kd,smx,rhovir,&kd->grps[iMassIndex[i]-1]);
-
+	rvir=kdRvir(kd,smx,rhovir,&kd->grps[i]);
 	/*
 	 * Find circular velocities
 	 */ 
 	if (rvir > 0.0) {
-	    kdVcirc(kd,smx,&kd->grps[iMassIndex[i]-1]);
+	    kdVcirc(kd,smx,&kd->grps[i]);
 	}
     }
     smFinish(smx);
@@ -908,10 +757,10 @@ void kdWriteProfile(KD kd, char *achOutFileBase,time_t timeRun, FILE *fpOutFile,
 
     fprintf(outfile,"# Radial mass profile for %s particles\n",pstring);
     fprintf(outfile,"# Run on %s",ctime(&timeRun));
-    fprintf(outfile,"# grp# Mass(R = %4.2f ... 2 Rvir)\n",2.0/NMASSPROFILE);
+    fprintf(outfile,"# grp# Mass(R = %4.2f ... 2 Rvir)\n",2.0/NVCIRC);
     for(gg=kd->grps,i=0;i<kd->nGrps;i++,gg++) {
 	fprintf(outfile,"%d ",gg->index);
-	for(j=0;j<NMASSPROFILE;++j) {
+	for(j=0;j<NVCIRC;++j) {
 	    switch (ptype) {
 	    case (DARK):
 		fprintf(outfile,"%g ",gg->fDark[j]*massunit);
@@ -1179,34 +1028,6 @@ void Order(KD kd)
 }
 
 
-void kdWriteConflict(KD kd, char *achOutFileBase, int iOpt)
-{
-    FILE *fp;
-    int i,j;
-    char longword[128];
-    
-    /* Open file */
-    if (iOpt == KD_SUBSUMED) {
-        sprintf(longword,"%s.sosub",achOutFileBase);
-    } else {
-        assert(iOpt == KD_IGNORED);
-        sprintf(longword,"%s.soign",achOutFileBase);
-    }
-    fp = fopen(longword,"w");
-    assert(fp != NULL);
-    fprintf(fp,"%d\n",kd->nParticles);
-    for (i=0;i<kd->nParticles;++i) {
-        if (iOpt == KD_SUBSUMED) {
-            fprintf(fp,"%d\n",kd->pInit[i].nSubsumed);
-        } else {	
-            assert(iOpt == KD_IGNORED);
-            fprintf(fp,"%d\n",kd->pInit[i].nIgnored);        
-        }
-    }
-    fclose(fp);
-}
-    
-
 void kdWriteArray(KD kd, char *achOutFileBase)
 {
     FILE *fp;
@@ -1297,87 +1118,3 @@ void kdWriteGTP(KD kd, char *achOutFileBase, int bStandard)
 	fclose(fp);
 }
 
-void kdOutStats(KD kd, FILE *fpOutFile) 
-{
-    int iCumParticlesSubsumed=0, iParticlesSubsumed=0;
-    double fCumMassSubsumed=0.0, fMassSubsumed=0.0;
-    int iCumParticlesIgnored=0, iParticlesIgnored=0;
-    double fCumMassIgnored=0.0, fMassIgnored=0.0;
-    double fHaloMassSum=0.0, fParticleMassSum=0.0;
-    int i;
-    PINIT *pp;
-    GRPNODE *gg;
-    
-    /* Count Particlewise quantities */
-    for (i=0, pp=&kd->pInit[0]; i<kd->nParticles; ++i, ++pp) {
-        if (pp->nSubsumed > 0) {
-            ++iParticlesSubsumed;
-            iCumParticlesSubsumed += pp->nSubsumed;
-            fMassSubsumed += pp->fMass;
-            fCumMassSubsumed += pp->fMass * pp->nSubsumed;
-        }
-        if (pp->nIgnored > 0) {
-            ++iParticlesIgnored;
-            iCumParticlesIgnored += pp->nIgnored;
-            fMassIgnored += pp->fMass;
-            fCumMassIgnored += pp->fMass * pp->nIgnored;
-        }
-        /* Add total mass of particles in halos */
-        if (pp->iGrp > 0)
-            fParticleMassSum += pp->fMass;
-    }
-    
-    /* Add total mass of halos (this should be >= total mass 
-     * of particles in halos */
-    for (i=0, gg=kd->grps; i<kd->nGrps; ++i, ++gg)
-        fHaloMassSum += max(gg->fMvir,0.0);  /* Set mass to zero for errorcode groups */
-    
-
-    /* Output */
-    fprintf(stderr,"\nSTATS:\n");
-    fprintf(stderr," PARTICLES:\n");
-    fprintf(stderr,"  Particles subsumed into larger groups (cumulative):  %i\n",iCumParticlesSubsumed);
-    fprintf(stderr,"  Particles subsumed into larger groups at least once: %i\n",iParticlesSubsumed);
-    fprintf(stderr,"  Mass subsumed into larger groups (cumulative):       %g\n",fCumMassSubsumed);
-    fprintf(stderr,"  Mass subsumed into larger groups at least once:      %g\n",fMassSubsumed);
-    fprintf(stderr,"  Particles retained by small groups in the face of adversity (cumulative):  %i\n",
-            iCumParticlesIgnored);
-    fprintf(stderr,"  Particles retained by small groups in the face of adversity at least once: %i\n",
-            iParticlesIgnored);
-    fprintf(stderr,"  Mass retained by smaller groups in the face of adversity (cumulative):     %g\n",
-            fCumMassIgnored);
-    fprintf(stderr,"  Mass retained by smaller groups in the face of adversity at least once:    %g\n",
-            fMassIgnored);
-    fprintf(stderr," GROUPS:\n");
-    fprintf(stderr,"  Groups subsumed into larger groups (cumulative): %i\n",kd->iGroupsRemoved);
-    fprintf(stderr,"  Total Mass of .sogrp particles in halos: %g\n",fParticleMassSum);
-    fprintf(stderr,"  Total Mass of groups:                    %g\n",fHaloMassSum);
-    fprintf(stderr,"  Mass Deviation (particles/groups-1):     %g\n",
-            fHaloMassSum/fParticleMassSum-1.);
-
-    fprintf(fpOutFile,"#STATS:\n");
-    fprintf(fpOutFile,"# PARTICLES:\n");
-    fprintf(fpOutFile,"#  Particles subsumed into larger groups (cumulative):  %i\n",iCumParticlesSubsumed);
-    fprintf(fpOutFile,"#  Particles subsumed into larger groups at least once: %i\n",iParticlesSubsumed);
-    fprintf(fpOutFile,"#  Mass subsumed into larger groups (cumulative):       %g\n",fCumMassSubsumed);
-    fprintf(fpOutFile,"#  Mass subsumed into larger groups at least once:      %g\n",fMassSubsumed);
-    fprintf(fpOutFile,"#  Particles retained by small groups in the face of adversity (cumulative):  %i\n",
-            iCumParticlesIgnored);
-    fprintf(fpOutFile,"#  Particles retained by small groups in the face of adversity at least once: %i\n",
-            iParticlesIgnored);
-    fprintf(fpOutFile,"#  Mass retained by smaller groups in the face of adversity (cumulative):     %g\n",
-            fCumMassIgnored);
-    fprintf(fpOutFile,"#  Mass retained by smaller groups in the face of adversity at least once:    %g\n",
-            fMassIgnored);
-    fprintf(fpOutFile,"# GROUPS:\n");
-    fprintf(fpOutFile,"#  Groups subsumed into larger groups (cumulative): %i\n",kd->iGroupsRemoved);
-    fprintf(fpOutFile,"#  Total Mass of .sogrp particles in halos: %g\n",fParticleMassSum);
-    fprintf(fpOutFile,"#  Total Mass of Groups:                    %g\n",fHaloMassSum);
-    fprintf(fpOutFile,"#  Percentage difference:                   %g\n",
-            fHaloMassSum/fParticleMassSum-1.);
-    
-}
-
-            
-         
-    

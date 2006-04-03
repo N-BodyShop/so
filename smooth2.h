@@ -19,7 +19,7 @@ typedef struct pqNode {
 	} PQ;
 
 
-typedef struct nNeighborList {
+typedef struct nNeighborListNode {
 	int iIndex;
 	PINIT *pInit;
 	float fDist2;
