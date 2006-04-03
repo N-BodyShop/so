@@ -143,6 +143,7 @@ typedef struct kdContext {
         int bPot;
         int nInGTP;
     int iGroupsRemoved;
+    int iGroupsSlurped;
     int iParticlesRemoved;
     int iParticlesIgnored;
     float fMassRemoved;

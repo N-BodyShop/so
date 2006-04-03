@@ -1,3 +1,26 @@
+/*
+ * SO v1.7 (May 2003)
+ *   -- Fixed bug of the handling of the following relatively rare case:
+ *          Imagine SKID groups 1 and 2.  SKID 1 is less massive than SKID 2 and
+ *          is therefore SO-ed first.  However, the SO virial radius of group 1 is
+ *          much larger than group 2.  Therefore group 2 is actually subsumed by
+ *          group 1.  Previously, this would have meant that all of the particles
+ *          in group 2 would have been left at their previous group 1 tag, but
+ *          group 2 would never have been zeroed in the .sovcirc file.  Now,
+ *          this event is handled properly as a "slurp".
+ */
+
+/* SO v1.61 (April 2002)
+ *   -- Fixed initialization bug in determination of group center of mass
+ *      (only affects group velocities in .gtp output on alphas)
+ */
+
+/* SO v1.6: (May 2001)
+ *   -- Added extra definition NMASSPROFILE which is the number of bins output for the 
+ *      mass profiles invoked by -gas,-dark,-star,-all.  This is currently set to 16
+ *      It can be different from NVCIRC (to which it was set previously) which is currently 8.
+ */
+
 /* SO v1.5:
  *   -- Improved file error handling.
  *   -- -rho option removed and replaced with -delta in light of Jenkins et al (2001) results.
@@ -118,12 +141,49 @@ void usage(void)
     fprintf(stderr,"   -subsumed/-ignored: causes .sosub/.soign TIPSY array files to be written\n");
     fprintf(stderr,"       which give the number of times a particle was subsumed into a larger\n");
     fprintf(stderr,"       group or ignored by a larger group because it belonged to a smaller one.\n");
-    fprintf(stderr,"  See output file header for output format.\n");
+    fprintf(stderr,"\n  See output file header for output format.\n\n");
     fprintf(stderr,"  Groupwise error codes are returned in Mvir and Rvir columns as follows:\n");
     fprintf(stderr,"     -1.0:  Fewer than nMembers particles within 1.2 times group's .grp radius\n");
     fprintf(stderr,"     -2.0:  Density < <fThreshold> within radius enclosing no more than\n");
     fprintf(stderr,"            <nMembers> particles.\n");
     fprintf(stderr,"     -3.0:  Density > <fThreshold> beyond 3 times group's .grp radius\n");
+    fprintf(stderr,"     -Mvir: Group was 'subsumed' or 'slurped' by the group 'groupID' that is given\n");
+    fprintf(stderr,"            in the Rvir columns as -10*groupID.  If the Vc columns are set with\n");
+    fprintf(stderr,"            meaningful numbers, then it was 'subsumed'.  If the numbers are 0,\n");
+    fprintf(stderr,"            then it was 'slurped'.\n");
+    fprintf(stderr,"\n'Subsuming,' 'Slurping,' and 'Retaining' behavior:\n");
+    fprintf(stderr,"    The groups are SO'd in increasing order of SKID or FOF mass.  This is an attempt\n");
+    fprintf(stderr,"    to produce the results whereby the most massive SO groups take precidence over\n");
+    fprintf(stderr,"    the smaller SO groups during a group collision.  After SO finds the virial mass\n");
+    fprintf(stderr,"    and radius of group 'A', it examines the member particles of A to see if any of them\n");
+    fprintf(stderr,"    are members of other groups.  When it encounters a particle that is already a member\n");
+    fprintf(stderr,"    of another group 'B' it checks as follows:\n");
+    fprintf(stderr,"        1. If the center of B is within the virial radius of A:\n");
+    fprintf(stderr,"                - Zero all particles that were members of B.\n");
+    fprintf(stderr,"                - Mark Mvir and Rvir of B according to case 4 (-Mvir:) above.\n");
+    fprintf(stderr,"                - Tag all particles in the virial radius of A as belonging to A.\n");
+    fprintf(stderr,"                - Group B is now 'subsumed'.\n");
+    fprintf(stderr,"        2. ELSE If the center of A is within the virial radius of B:\n");
+    fprintf(stderr,"                - Zero all particles that were members of A.\n");
+    fprintf(stderr,"                - Mark Mvir and Rvir of A according to case 4 (-Mvir:) above.\n");
+    fprintf(stderr,"                - Tag all particles in the virial radius of B as belonging to B.\n");
+    fprintf(stderr,"                - Group A is now 'slurped' by B.  Thus, slurping is an odd case where\n");
+    fprintf(stderr,"                  the Rvir of the smaller SKID or FOF group is *larger* than the\n");
+    fprintf(stderr,"                  Rvir of the larger SKID or FOF group.\n");
+    fprintf(stderr,"                - Particles in Group A will be tabulated as 'subsumed' even though the\n");
+    fprintf(stderr,"                  group itself will be tabulated as 'slurped.'\n");
+    fprintf(stderr,"        2. ELSE Niether A nor B are within each other's radius:\n");
+    fprintf(stderr,"                - Group B retains all of its particles.\n");
+    fprintf(stderr,"                - However, all of the particles that fall within Rvir of A,\n");
+    fprintf(stderr,"                  regardless of membership, are used in calculating group A's\n");
+    fprintf(stderr,"                  quantities.  Thus, there will be a discrepancy in the total mass\n");
+    fprintf(stderr,"                  of all groups and the total mass of all particles in groups.\n");
+    fprintf(stderr,"                  This discrepancy is reported at the end of the run.\n");
+    fprintf(stderr,"                - Group B particles that would have belonged to Group A are reported\n");
+    fprintf(stderr,"                  as having been 'retained in the face of adversity.'\n\n");
+    
+
+    
     exit(1);
 }
 
@@ -144,7 +204,7 @@ int main(int argc,char **argv)
 	time_t timeRun;
 	FILE *fpOutFile;
 
-	fprintf(stderr,"SO Release 1.5: Jeff Gardner, Nov 2000\n");
+	fprintf(stderr,"SO Release 1.7: Jeff Gardner, May 2003\n");
 	strcpy(achDefOutBase,"so");
 	/*
 	 ** Bucket size set to 16, user cannot affect this!
@@ -427,7 +487,7 @@ int main(int argc,char **argv)
 	fpOutFile = fopen(achLongWord,"w");
 	assert(fpOutFile != NULL);
 	time(&timeRun);
-	fprintf(fpOutFile,"#SO v1.5: Jeff Gardner, Nov 2000\n");
+	fprintf(fpOutFile,"#SO v1.61: Jeff Gardner, April 2002\n");
 	fprintf(fpOutFile,"# Run on %s",ctime(&timeRun));
 	fprintf(fpOutFile,"# Input .gtp file: %s\n",achGTPFile);
 	if (achListFile != NULL)

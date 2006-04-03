@@ -5,6 +5,10 @@
 
 #define MAXLEV 13
 
+#ifndef FLT_MAX
+#define FLT_MAX 3.4e+38
+#endif
+
 /*
  ** Romberg integrator for an open interval.
  */

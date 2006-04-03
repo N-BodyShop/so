@@ -106,6 +106,7 @@ int kdInit(KD *pkd,int nBucket,float *fPeriod,float *fCenter,int bOutDiag,
 	kd->bMarkList = NULL;
 	kd->bPot = bPot;
         kd->iGroupsRemoved = 0;
+        kd->iGroupsSlurped = 0;
 	return(1);
 	}
 
@@ -593,6 +594,9 @@ void _VcmParticles(SMX smx, GRPNODE *grp, int j, float mass)
 {
     int k,l;
     
+    for (l=0;l<3;l++)
+      grp->vcm[l] = 0.0;
+
     for (k=0;k<j;++k) {
         for (l=0;l<3;l++)
             grp->vcm[l] += smx->nnList[k].pInit->fMass*smx->nnList[k].pInit->v[l];
@@ -605,8 +609,10 @@ void _VcmParticles(SMX smx, GRPNODE *grp, int j, float mass)
 
 /* This is really inelegant, but it's the easiest way and still
  * seems to be reasonably fast.
+ *    iMode == 0: Do not set other particles of grpSmall to zero
+ *    iMode == 1: Set other members grpSmall to zero
  */
-void kdZeroGroup(KD kd, GRPNODE *grpSmall, GRPNODE *grpBig)
+void kdZeroGroup(KD kd, GRPNODE *grpSmall, GRPNODE *grpBig, int iMode)
 {
     int i;
     PINIT *pp;
@@ -624,11 +630,13 @@ void kdZeroGroup(KD kd, GRPNODE *grpSmall, GRPNODE *grpBig)
     }
     grpSmall->fRvir = -10.0*grpBig->index;
     grpSmall->fMvir = -grpSmall->fMvir;
-    for (i=0, pp=&kd->pInit[0]; i<kd->nParticles; ++i, ++pp) {
-        if (pp->iGrp == grpSmall->index) {
-            pp->iGrp = 0;
-            ++pp->nSubsumed;
-        }
+    if (iMode) {
+	 for (i=0, pp=&kd->pInit[0]; i<kd->nParticles; ++i, ++pp) {
+	      if (pp->iGrp == grpSmall->index) {
+		   pp->iGrp = 0;
+		   ++pp->nSubsumed;
+	      }
+	 }
     }    
 }
 
@@ -655,9 +663,14 @@ void kdTagParticles(KD kd, SMX smx, GRPNODE *grpBig, int n)
     int k;
     float dx,dy,dz,r2;
     GRPNODE *grpSmall;
+    int iSlurped = 0;
     
     for (k=0;k<n;++k) {
+	if (iSlurped) break;
         if (smx->nnList[k].pInit->iGrp != 0) { /* Particle already in Group */
+	     /*if (smx->nnList[k].pInit->iGrp == 2280) {
+	      *	  printf("2280 particle %d subsumed by %d\n",smx->nnList[k].pInit->iOrder,grpBig->index);
+	      *}*/
             grpSmall = kdFindGroup(kd,smx->nnList[k].pInit->iGrp);
             dx = grpBig->pos[0] - grpSmall->pos[0];
             dy = grpBig->pos[1] - grpSmall->pos[1];
@@ -673,20 +686,33 @@ void kdTagParticles(KD kd, SMX smx, GRPNODE *grpBig, int n)
                             grpBig->index, grpBig->pos[0], grpBig->pos[1], grpBig->pos[2]);
                     fprintf(stderr,"   r: %g  fRvir: %g\n",sqrt(r2),grpBig->fRvir);
                     }*/
-                kdZeroGroup(kd,grpSmall,grpBig);
+                kdZeroGroup(kd,grpSmall,grpBig,1);
                 ++kd->iGroupsRemoved;
+		smx->nnList[k].pInit->iGrp=grpBig->index;
+	    } else if ( r2 <= sqr(grpSmall->fRvir) ) {
+		 /*
+		 ** This is a quick fix to handle the rare condition where the "small"
+		 ** group is actually bigger than the "big" group and the "big"
+		 ** group falls withing the "small" group's virial radius.  In this case,
+		 ** we zero the "big" group.
+		 */
+		 kdZeroGroup(kd,grpBig,grpSmall,1);
+		 ++kd->iGroupsSlurped;
+		 iSlurped = grpSmall->index;
+		 /*printf("'Big' Group %d slurped by 'small' group %d!\n",grpBig->index,
+		  *	grpSmall->index);*/
             } else {
-/*                if (smx->nnList[k].pInit->iGrp == 143 || smx->nnList[k].pInit->iGrp == 147) {
+		 /* if (smx->nnList[k].pInit->iGrp == 143 || smx->nnList[k].pInit->iGrp == 147) {
                     fprintf(stderr,"Ignoring group %d(indx=%d): %g %g %g,\n   encroached by group %d: %g, %g, %g\n",
                             smx->nnList[k].pInit->iGrp,grpSmall->index,
                             grpSmall->pos[0],grpSmall->pos[1],grpSmall->pos[2],
                             grpBig->index, grpBig->pos[0], grpBig->pos[1], grpBig->pos[2]);
                     fprintf(stderr,"   r: %g  fRvir: %g\n",sqrt(r2),grpBig->fRvir);
                     }*/
-                ++smx->nnList[k].pInit->nIgnored;
+		 ++smx->nnList[k].pInit->nIgnored;
             }
         } else {
-            smx->nnList[k].pInit->iGrp=grpBig->index;
+	     smx->nnList[k].pInit->iGrp=grpBig->index;
         }
     }
 }
@@ -835,7 +861,7 @@ int *kdSortMass(KD kd)
 
 void kdSO(KD kd, float rhovir, int nSmooth)
 {
-    int i;
+    int i,j;
     int *iMassIndex;
     float fBall2, rvir;
     SMX smx;
@@ -853,9 +879,15 @@ void kdSO(KD kd, float rhovir, int nSmooth)
 	/*
 	 * Find circular velocities
 	 */ 
-	if (rvir > 0.0) {
+	if (rvir > 0.0 && kd->grps[iMassIndex[i]-1].fRvir > 0.0 ) {
 	    kdVcirc(kd,smx,&kd->grps[iMassIndex[i]-1]);
-	}
+	} 
+	/*else {
+	 *    for(j=0;j<NVCIRC;++j) {
+	 *	  kd->grps[iMassIndex[i]-1].fVcirc[j] = -9999.99;
+	 *    }
+	 *}*/
+
     }
     smFinish(smx);
 }
@@ -1349,7 +1381,8 @@ void kdOutStats(KD kd, FILE *fpOutFile)
     fprintf(stderr,"  Mass retained by smaller groups in the face of adversity at least once:    %g\n",
             fMassIgnored);
     fprintf(stderr," GROUPS:\n");
-    fprintf(stderr,"  Groups subsumed into larger groups (cumulative): %i\n",kd->iGroupsRemoved);
+    fprintf(stderr,"  Groups subsumed into larger groups (cumulative):  %i\n",kd->iGroupsRemoved);
+    fprintf(stderr,"  Groups 'slurped' into larger groups (cumulative): %i\n",kd->iGroupsSlurped);
     fprintf(stderr,"  Total Mass of .sogrp particles in halos: %g\n",fParticleMassSum);
     fprintf(stderr,"  Total Mass of groups:                    %g\n",fHaloMassSum);
     fprintf(stderr,"  Mass Deviation (particles/groups-1):     %g\n",
@@ -1370,7 +1403,8 @@ void kdOutStats(KD kd, FILE *fpOutFile)
     fprintf(fpOutFile,"#  Mass retained by smaller groups in the face of adversity at least once:    %g\n",
             fMassIgnored);
     fprintf(fpOutFile,"# GROUPS:\n");
-    fprintf(fpOutFile,"#  Groups subsumed into larger groups (cumulative): %i\n",kd->iGroupsRemoved);
+    fprintf(fpOutFile,"#  Groups subsumed into larger groups (cumulative):  %i\n",kd->iGroupsRemoved);
+    fprintf(fpOutFile,"#  Groups 'slurped' into larger groups (cumulative): %i\n",kd->iGroupsSlurped);
     fprintf(fpOutFile,"#  Total Mass of .sogrp particles in halos: %g\n",fParticleMassSum);
     fprintf(fpOutFile,"#  Total Mass of Groups:                    %g\n",fHaloMassSum);
     fprintf(fpOutFile,"#  Percentage difference:                   %g\n",
