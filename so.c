@@ -48,6 +48,7 @@
 #include <limits.h>
 #include <string.h>
 #include <assert.h>
+#include <time.h>
 #include "kd2.h"
 
 /* The following 2 functions come from Kitayama & Suto 1996, ApJ, 469, 480 */
