@@ -14,6 +14,7 @@
 #include <assert.h>
 #include <limits.h>
 #include <string.h>
+#include <time.h>
 #include "smooth2.h"
 #include "tipsydefs.h"
 
