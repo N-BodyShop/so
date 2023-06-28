@@ -6,13 +6,13 @@
 #Generic CFLAGS:
 #CFLAGS	= -O2
 #gcc CFLAGS:
-CFLAGS = -O3 -funroll-loops
+CFLAGS = -O3 -funroll-loops -I/usr/include/tirpc
 #CFLAGS = -ggdb
 #R10k CFLAGS:
 #CFLAGS = -O3 -mips4 -64 -r10000
 
 CC=cc
-LIBS	=   -lm
+LIBS	=   -lm -ltirpc
 
 default: so
 
